@@ -67,6 +67,13 @@ async def _spinner(prefix: str = "[Agent] ", interval: float = 0.08) -> None:
         raise
 
 
+SAMPLE_QUESTIONS = [
+    "Azure Databricks Model Serving이 무엇인지 한 문단으로 설명해줘.",
+    "Microsoft Agent Framework와 Microsoft Foundry Agent Service의 차이를 비교해줘.",
+    "이 샘플처럼 Databricks의 Claude 모델을 호출할 때 주의할 점 3가지를 알려줘.",
+]
+
+
 async def main() -> None:
     agent = build_client().as_agent(
         name="DatabricksClaudeAgent",
@@ -78,22 +85,29 @@ async def main() -> None:
     )
 
     print("Databricks Claude Opus 4.7 agent — 대화를 시작합니다.")
-    print("종료하려면 빈 줄을 입력하거나 Ctrl-D를 누르세요.\n")
+    print("종료하려면 빈 줄을 입력하거나 Ctrl-D를 누르세요.")
+    print(f"먼저 샘플 질문 {len(SAMPLE_QUESTIONS)}개를 자동으로 실행합니다.\n")
 
     total_input = 0
     total_output = 0
     total_all = 0
     turns = 0
 
+    sample_queue = list(SAMPLE_QUESTIONS)
+
     try:
         while True:
-            try:
-                user_message = input("[User] ").strip()
-            except EOFError:
-                print()
-                break
-            if not user_message:
-                break
+            if sample_queue:
+                user_message = sample_queue.pop(0)
+                print(f"[User] {user_message}  (sample)")
+            else:
+                try:
+                    user_message = input("[User] ").strip()
+                except EOFError:
+                    print()
+                    break
+                if not user_message:
+                    break
 
             stream = agent.run(user_message, stream=True)
             spinner_task: asyncio.Task | None = asyncio.create_task(_spinner())
