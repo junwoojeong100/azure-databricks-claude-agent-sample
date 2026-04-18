@@ -61,23 +61,42 @@ cp .env.example .env
 별도로 `source .env`를 할 필요가 없습니다. 셸 환경 변수가 이미 설정돼 있다면
 그 값이 우선합니다.
 
-스트리밍으로 응답이 출력된 뒤, 매 턴마다 사용 토큰이 표시되고
-빈 줄/Ctrl-D로 종료하면 누적 합계가 출력됩니다.
+실행 흐름:
+
+1. 시작과 동시에 한국어 **샘플 질문 3개**(`SAMPLE_QUESTIONS`)가 자동으로 큐에서
+   순차 실행됩니다 — 사용자가 입력하지 않아도 곧바로 응답을 확인할 수 있습니다.
+   각 샘플 턴은 프롬프트 라인 끝에 `(sample)` 라벨로 표시됩니다.
+2. 모델이 첫 토큰을 보내기 전까지 같은 줄에서 브레일 스피너
+   (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ 응답 대기 중…`)가 회전합니다. 첫 토큰이 도착하면 스피너가
+   사라지고 응답이 스트리밍됩니다.
+3. 매 턴마다 사용 토큰이 출력됩니다.
+4. 샘플 큐가 비면 자동으로 사용자 입력(stdin) 모드로 전환됩니다. 빈 줄 또는
+   Ctrl-D로 종료하면 누적 합계가 출력됩니다.
+
+샘플 질문 목록(스크립트 상단 `SAMPLE_QUESTIONS`에서 자유롭게 수정 가능):
+
+1. Azure Databricks Model Serving이 무엇인지 한 문단으로 설명해줘.
+2. Microsoft Agent Framework와 Microsoft Foundry Agent Service의 차이를 비교해줘.
+3. 이 샘플처럼 Databricks의 Claude 모델을 호출할 때 주의할 점 3가지를 알려줘.
+
+출력 예시:
 
 ```
-[User] 안녕? 1+1은?
-[Agent] 안녕하세요! 1 + 1 = 2 입니다.
+Databricks Claude Opus 4.7 agent — 대화를 시작합니다.
+종료하려면 빈 줄을 입력하거나 Ctrl-D를 누르세요.
+먼저 샘플 질문 3개를 자동으로 실행합니다.
+
+[User] Azure Databricks Model Serving이 무엇인지 한 문단으로 설명해줘.  (sample)
+⠹ 응답 대기 중…
+[Agent] Azure Databricks Model Serving은 …
 [Tokens] this turn: input=1458 output=58 total=139
          | cumulative (1 turns): input=1458 output=58 total=139
 
-[User] 한국의 수도는?
-[Agent] 한국(대한민국)의 수도는 서울입니다.
-[Tokens] this turn: input=2905 output=124 total=207
-         | cumulative (2 turns): input=4363 output=182 total=346
+... (샘플 2, 3 자동 실행) ...
 
-[User]
+[User]                          ← 여기서부터 직접 입력
 ============================================================
-세션 요약 — 2턴, 총 input=4363, output=182, total=346 tokens
+세션 요약 — 3턴, 총 input=4363, output=182, total=346 tokens
 ```
 
 > 토큰 카운트는 Databricks/Anthropic이 반환하는 `usage` 필드를 그대로 사용합니다.
