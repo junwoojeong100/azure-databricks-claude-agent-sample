@@ -12,6 +12,7 @@ Databricks Foundation Model API는 OpenAI Chat Completions와 동일한 페이�
 
 import asyncio
 import itertools
+import json
 import os
 import sys
 
@@ -28,6 +29,30 @@ async def _rewrite_to_invocations(request: httpx.Request) -> None:
     if request.url.path.endswith("/chat/completions"):
         new_path = request.url.path[: -len("/chat/completions")] + "/invocations"
         request.url = request.url.copy_with(path=new_path)
+
+    if request.method == "POST" and request.content:
+        try:
+            body = json.loads(request.content)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return
+        if not isinstance(body, dict):
+            return
+        messages = body.get("messages")
+        if not isinstance(messages, list):
+            return
+        changed = False
+        for msg in messages:
+            if isinstance(msg, dict) and "name" in msg:
+                # Databricks-hosted Anthropic models reject the optional `name`
+                # field on assistant/user messages, while Agent Framework
+                # populates it with the agent name when replaying history.
+                msg.pop("name", None)
+                changed = True
+        if changed:
+            new_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            request.stream = httpx.ByteStream(new_body)
+            request._content = new_body
+            request.headers["content-length"] = str(len(new_body))
 
 
 def build_client() -> OpenAIChatCompletionClient:
@@ -88,6 +113,8 @@ async def main() -> None:
     print("종료하려면 빈 줄을 입력하거나 Ctrl-D를 누르세요.")
     print(f"먼저 샘플 질문 {len(SAMPLE_QUESTIONS)}개를 자동으로 실행합니다.\n")
 
+    session = agent.create_session()
+
     total_input = 0
     total_output = 0
     total_all = 0
@@ -109,7 +136,7 @@ async def main() -> None:
                 if not user_message:
                     break
 
-            stream = agent.run(user_message, stream=True)
+            stream = agent.run(user_message, stream=True, session=session)
             spinner_task: asyncio.Task | None = asyncio.create_task(_spinner())
             try:
                 async for update in stream:
