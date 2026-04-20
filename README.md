@@ -23,7 +23,8 @@ Databricks Foundation Model API의 Anthropic 모델은 OpenAI Chat Completions�
 ## 2. 설치
 
 ```bash
-cd /Users/junwoojeong/GitHub/azure-databricks-claude-agent-sample
+git clone https://github.com/<your-account>/azure-databricks-claude-agent-sample.git
+cd azure-databricks-claude-agent-sample
 
 python3.12 -m venv .venv
 .venv/bin/pip install -r requirements.txt
