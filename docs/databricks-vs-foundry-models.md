@@ -1,5 +1,9 @@
 # Databricks 호스팅 모델 vs Microsoft Foundry 모델 직접 사용 — Foundry Control Plane 관점
 
+> ℹ️ **참고(심화) 문서입니다.** 설치·설정·실행·문제 해결 등 **실습은 [README](../README.md)만으로
+> 완결**됩니다. 이 문서는 Databricks 호스팅 방식과 Microsoft Foundry 직접 사용을 비교하고,
+> 관리자 권한 모델(§10)과 모니터링 리소스·비용(§11)을 깊이 있게 다루는 배경/참고 자료입니다.
+
 ## TL;DR
 
 현재 샘플처럼 **Databricks Foundation Model API**로 Claude를 호출하면 모델 거버넌스/네트워킹/관측이 **Databricks Control Plane**에 묶입니다. **Foundry Models를 직접 쓰면** Azure AI Foundry의 RBAC, Private Link, Content Safety, Cost Management, 모델 카탈로그가 **Foundry Control Plane** 한 곳에서 관리됩니다.
