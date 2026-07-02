@@ -1,5 +1,5 @@
 """
-Microsoft Agent Framework + Azure Databricks (Claude Opus 4.7) 샘플.
+Microsoft Agent Framework + Azure Databricks (Claude Opus 4.8) 샘플.
 
 Databricks Foundation Model API는 OpenAI Chat Completions와 동일한 페이로드/응답
 포맷을 가지지만, 경로는 `/serving-endpoints/<name>/invocations`만 받습니다
@@ -37,17 +37,26 @@ async def _rewrite_to_invocations(request: httpx.Request) -> None:
             return
         if not isinstance(body, dict):
             return
-        messages = body.get("messages")
-        if not isinstance(messages, list):
-            return
+
         changed = False
-        for msg in messages:
-            if isinstance(msg, dict) and "name" in msg:
-                # Databricks-hosted Anthropic models reject the optional `name`
-                # field on assistant/user messages, while Agent Framework
-                # populates it with the agent name when replaying history.
-                msg.pop("name", None)
-                changed = True
+
+        # Databricks Foundation Model API `/invocations` rejects the OpenAI
+        # `stream_options` field ('unknown field "stream_options"'). Streaming
+        # responses already carry `usage` on every chunk, so it is safe to drop.
+        if body.pop("stream_options", None) is not None:
+            changed = True
+
+        messages = body.get("messages")
+        if isinstance(messages, list):
+            for msg in messages:
+                if isinstance(msg, dict) and "name" in msg:
+                    # Databricks-hosted Anthropic models reject the optional
+                    # `name` field on assistant/user messages, while Agent
+                    # Framework populates it with the agent name when replaying
+                    # history.
+                    msg.pop("name", None)
+                    changed = True
+
         if changed:
             new_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
             request.stream = httpx.ByteStream(new_body)
@@ -103,13 +112,13 @@ async def main() -> None:
     agent = build_client().as_agent(
         name="DatabricksClaudeAgent",
         instructions=(
-            "You are a helpful assistant powered by Claude Opus 4.7 "
+            "You are a helpful assistant powered by Claude Opus 4.8 "
             "served from Azure Databricks Model Serving. "
             "한국어 질문에는 한국어로 답하세요."
         ),
     )
 
-    print("Databricks Claude Opus 4.7 agent — 대화를 시작합니다.")
+    print("Databricks Claude Opus 4.8 agent — 대화를 시작합니다.")
     print("종료하려면 빈 줄을 입력하거나 Ctrl-D를 누르세요.")
     print(f"먼저 샘플 질문 {len(SAMPLE_QUESTIONS)}개를 자동으로 실행합니다.\n")
 
