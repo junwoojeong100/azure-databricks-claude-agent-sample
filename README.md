@@ -343,7 +343,7 @@ async def rewrite(req: httpx.Request) -> None:
 http_client = httpx.AsyncClient(event_hooks={"request": [rewrite]})
 openai_client = AsyncOpenAI(
     base_url=f"{HOST}/serving-endpoints/{ENDPOINT}/",
-    api_key=DATABRICKS_PAT,
+    api_key=DATABRICKS_TOKEN,
     http_client=http_client,
 )
 client = OpenAIChatCompletionClient(async_client=openai_client, model=ENDPOINT)
