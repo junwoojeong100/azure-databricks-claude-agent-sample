@@ -115,25 +115,29 @@ _ENABLEMENT_ERROR_HINTS = (
 )
 
 
-def _looks_like_partner_enablement_error(exc: BaseException) -> bool:
+def _looks_like_endpoint_disabled_error(exc: BaseException) -> bool:
     text = str(exc)
     return any(hint in text for hint in _ENABLEMENT_ERROR_HINTS)
 
 
-def _print_partner_enablement_help(endpoint: str) -> None:
-    # Anthropic (Claude) endpoints are partner-powered and are disabled by
-    # default at the account level in some tenants, so the very first call
-    # fails with a Databricks-set rate limit of 0. Point the operator at the
-    # exact account-console toggle instead of dumping a raw stack trace.
+def _print_endpoint_enablement_help(endpoint: str) -> None:
+    # Anthropic Claude models are classified as "EU and US" pay-per-token
+    # models. A workspace outside the EU/US (e.g. koreacentral) must have
+    # cross-Geo data processing enabled to reach them, otherwise the very
+    # first call fails with a Databricks-set rate limit of 0. Point the
+    # operator at the exact account-console toggle instead of a stack trace.
     print(
         "\n" + "=" * 60 + "\n"
         f"[!] '{endpoint}' 호출이 거부되었습니다 (Databricks-set rate limit of 0).\n\n"
-        "Anthropic Claude는 파트너 기반(partner-powered) 모델이라 계정 레벨\n"
-        "활성화가 필요합니다. 계정 관리자가 account console에서 켜야 합니다:\n"
+        "Claude(예: Opus 4.8)는 'EU/US 리전' pay-per-token 모델이라, 워크스페이스가\n"
+        "EU/US가 아닌 리전(예: koreacentral)이면 cross-Geo 데이터 처리를 켜야\n"
+        "접근할 수 있습니다. 계정 관리자가 account console에서 설정하세요:\n"
         "  1) https://accounts.azuredatabricks.net (계정 관리자로 로그인)\n"
-        "  2) Settings → Feature enablement\n"
-        "  3) 'Enable partner-powered AI features' = On\n\n"
-        "참고: databricks-meta-llama-3-3-70b-instruct 같은 Databricks 자체\n"
+        "  2) 사이드바 Workspaces → 해당 워크스페이스 클릭\n"
+        "  3) Security and compliance 탭\n"
+        "  4) 'Enforce data processing within workspace Geography for\n"
+        "     Designated Services'를 Off (= cross-Geo 처리 허용)\n\n"
+        "참고: databricks-meta-llama-3-3-70b-instruct 같은 인리전 Databricks\n"
         "호스팅 모델은 이 설정 없이도 동작합니다.\n"
         + "=" * 60
     )
@@ -198,9 +202,9 @@ async def main() -> None:
                     except asyncio.CancelledError:
                         pass
                     spinner_task = None
-                if not _looks_like_partner_enablement_error(exc):
+                if not _looks_like_endpoint_disabled_error(exc):
                     raise
-                _print_partner_enablement_help(
+                _print_endpoint_enablement_help(
                     os.environ.get("DATABRICKS_SERVING_ENDPOINT", "?")
                 )
                 return
