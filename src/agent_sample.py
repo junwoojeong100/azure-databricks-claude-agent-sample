@@ -1,5 +1,5 @@
 """
-Microsoft Agent Framework + Azure Databricks (Claude Opus 4.7) 샘플.
+Microsoft Agent Framework + Azure Databricks (Claude Opus 4.8) 샘플.
 
 Databricks Foundation Model API는 OpenAI Chat Completions와 동일한 페이로드/응답
 포맷을 가지지만, 경로는 `/serving-endpoints/<name>/invocations`만 받습니다
@@ -37,17 +37,26 @@ async def _rewrite_to_invocations(request: httpx.Request) -> None:
             return
         if not isinstance(body, dict):
             return
-        messages = body.get("messages")
-        if not isinstance(messages, list):
-            return
+
         changed = False
-        for msg in messages:
-            if isinstance(msg, dict) and "name" in msg:
-                # Databricks-hosted Anthropic models reject the optional `name`
-                # field on assistant/user messages, while Agent Framework
-                # populates it with the agent name when replaying history.
-                msg.pop("name", None)
-                changed = True
+
+        # Databricks Foundation Model API `/invocations` rejects the OpenAI
+        # `stream_options` field ('unknown field "stream_options"'). Streaming
+        # responses already carry `usage` on every chunk, so it is safe to drop.
+        if body.pop("stream_options", None) is not None:
+            changed = True
+
+        messages = body.get("messages")
+        if isinstance(messages, list):
+            for msg in messages:
+                if isinstance(msg, dict) and "name" in msg:
+                    # Databricks-hosted Anthropic models reject the optional
+                    # `name` field on assistant/user messages, while Agent
+                    # Framework populates it with the agent name when replaying
+                    # history.
+                    msg.pop("name", None)
+                    changed = True
+
         if changed:
             new_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
             request.stream = httpx.ByteStream(new_body)
@@ -99,17 +108,57 @@ SAMPLE_QUESTIONS = [
 ]
 
 
+_ENABLEMENT_ERROR_HINTS = (
+    "rate limit of 0",
+    "temporarily disabled",
+    "PERMISSION_DENIED",
+)
+
+
+def _looks_like_endpoint_disabled_error(exc: BaseException) -> bool:
+    text = str(exc)
+    return any(hint in text for hint in _ENABLEMENT_ERROR_HINTS)
+
+
+def _print_endpoint_enablement_help(endpoint: str) -> None:
+    # Anthropic Claude on Databricks is a *Databricks-hosted* Foundation Model
+    # (same /invocations API, system.ai catalog, DBU billing and 200k ITPM
+    # limit as Llama). A 403 "rate limit of 0" is therefore not normal
+    # throttling (that returns 429) but an account-level Anthropic serving-
+    # capacity allocation of 0 — not fixable via customer settings. Point the
+    # operator at the real remedy instead of dumping a stack trace.
+    print(
+        "\n" + "=" * 60 + "\n"
+        f"[!] '{endpoint}' 호출이 거부되었습니다 (Databricks-set rate limit of 0).\n\n"
+        "Claude는 Databricks-hosted Foundation Model이지만"
+        "(Llama와 동일한 API/과금/한도),\n"
+        "Anthropic(라이선스 파트너) 모델은 계정/지역별 서빙 용량 "
+        "할당 대상입니다. 이 계정에\n"
+        "할당이 0이라 막힌 상태로, "
+        "PAT·권한·partner-powered·cross-Geo 등 고객 설정으로는\n"
+        "바뀌지 않습니다. 해결:\n"
+        "  - Anthropic 용량이 할당된 다른 Entra 테넌트/구독에서 실행, 또는\n"
+        "  - Azure Databricks account team에 계정의 Anthropic 용량 활성화 요청.\n"
+        "  (비 EU/US 리전은 account console → Workspaces → 워크스페이스 →\n"
+        "   Security and compliance에서 cross-Geo 처리도 켜야 하지만, 위 용량이 0이면\n"
+        "   그것만으로는 열리지 않습니다.)\n\n"
+        "참고: databricks-meta-llama-3-3-70b-instruct 같은 오픈 Databricks 호스팅\n"
+        "모델은 이 할당과 무관하게 동작합니다.\n"
+        + "=" * 60
+    )
+
+
 async def main() -> None:
     agent = build_client().as_agent(
         name="DatabricksClaudeAgent",
         instructions=(
-            "You are a helpful assistant powered by Claude Opus 4.7 "
+            "You are a helpful assistant powered by Claude Opus 4.8 "
             "served from Azure Databricks Model Serving. "
             "한국어 질문에는 한국어로 답하세요."
         ),
     )
 
-    print("Databricks Claude Opus 4.7 agent — 대화를 시작합니다.")
+    print("Databricks Claude Opus 4.8 agent — 대화를 시작합니다.")
     print("종료하려면 빈 줄을 입력하거나 Ctrl-D를 누르세요.")
     print(f"먼저 샘플 질문 {len(SAMPLE_QUESTIONS)}개를 자동으로 실행합니다.\n")
 
@@ -150,6 +199,20 @@ async def main() -> None:
                             spinner_task = None
                             print("[Agent] ", end="", flush=True)
                         print(update.text, end="", flush=True)
+            except Exception as exc:  # noqa: BLE001
+                if spinner_task is not None and not spinner_task.done():
+                    spinner_task.cancel()
+                    try:
+                        await spinner_task
+                    except asyncio.CancelledError:
+                        pass
+                    spinner_task = None
+                if not _looks_like_endpoint_disabled_error(exc):
+                    raise
+                _print_endpoint_enablement_help(
+                    os.environ.get("DATABRICKS_SERVING_ENDPOINT", "?")
+                )
+                return
             finally:
                 if spinner_task is not None and not spinner_task.done():
                     spinner_task.cancel()
@@ -186,7 +249,8 @@ async def main() -> None:
             print("=" * 60)
             print(
                 f"세션 요약 — {turns}턴, "
-                f"총 input={total_input}, output={total_output}, total={total_all} tokens"
+                f"총 input={total_input}, output={total_output}, "
+                f"total={total_all} tokens"
             )
 
 
