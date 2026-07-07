@@ -6,7 +6,7 @@
 
 ## TL;DR
 
-현재 샘플처럼 **Databricks Foundation Model API**로 Claude를 호출하면 모델 거버넌스/네트워킹/관측이 **Databricks Control Plane**에 묶입니다. **Foundry Models를 직접 쓰면** Azure AI Foundry의 RBAC, Private Link, Content Safety, Cost Management, 모델 카탈로그가 **Foundry Control Plane** 한 곳에서 관리됩니다.
+현재 샘플처럼 **Databricks Foundation Model API**로 Claude를 호출하면 모델 거버넌스/네트워킹/관측이 **Databricks Control Plane**에 묶입니다. **Foundry Models를 직접 쓰면** Foundry의 RBAC, Private Link, Content Safety, Cost Management, 모델 카탈로그가 **Foundry Control Plane** 한 곳에서 관리됩니다.
 
 ---
 
@@ -99,8 +99,6 @@ Foundry는 Azure Monitor / Application Insights와 **표준 통합**, Databricks
 | Evaluation / Guardrails | 별도 구축 | Foundry Evaluations + Content Safety |
 
 샘플 코드의 `/invocations` 리라이트 같은 우회가 필요 없고, Microsoft가 정식 권장 경로입니다.
-
----
 
 ---
 
