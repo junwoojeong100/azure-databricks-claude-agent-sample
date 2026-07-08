@@ -33,6 +33,9 @@ AUTOSTART="${AUTOSTART:-1}"                            # 1=install a service
 LAUNCHD_LABEL="${LAUNCHD_LABEL:-com.databricks.claude-proxy}"
 CLAUDE_SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 ENDPOINT="${DATABRICKS_SERVING_ENDPOINT:-databricks-claude-opus-4-8}"
+# Small/fast "classifier" model Claude Code uses for background tasks
+# (ANTHROPIC_SMALL_FAST_MODEL); a lighter/cheaper endpoint than the main one.
+FAST_ENDPOINT="${DATABRICKS_FAST_ENDPOINT:-databricks-claude-haiku-4-5}"
 FORCE="${FORCE:-0}"                                   # 1=reinstall litellm
 
 set -euo pipefail
@@ -58,8 +61,9 @@ fi
 : "${DATABRICKS_HOST:?DATABRICKS_HOST is required (in .env or the environment)}"
 : "${DATABRICKS_TOKEN:?DATABRICKS_TOKEN is required (in .env or the environment)}"
 ENDPOINT="${DATABRICKS_SERVING_ENDPOINT:-$ENDPOINT}"
+FAST_ENDPOINT="${DATABRICKS_FAST_ENDPOINT:-$FAST_ENDPOINT}"
 API_BASE="${DATABRICKS_HOST%/}/serving-endpoints"
-ok "endpoint: $ENDPOINT   base: $API_BASE"
+ok "endpoint: $ENDPOINT   fast: $FAST_ENDPOINT   base: $API_BASE"
 
 # ---------------------------------------------------------------------------
 log "2/7 Preflight"
@@ -97,19 +101,37 @@ fi
 # ---------------------------------------------------------------------------
 log "4/7 Write proxy config, credentials, and start script"
 
+# Optional explicit entry for the small/fast "classifier" model. Skipped when it
+# equals the main endpoint, since the catch-all already routes it there.
+FAST_ENTRY=""
+if [ "$FAST_ENDPOINT" != "$ENDPOINT" ]; then
+  FAST_ENTRY=$(cat <<EOF
+  # Small/fast "classifier" model Claude Code uses for background tasks
+  # (ANTHROPIC_SMALL_FAST_MODEL) — routed to a lighter Databricks endpoint.
+  - model_name: $FAST_ENDPOINT
+    litellm_params:
+      model: databricks/$FAST_ENDPOINT
+      api_key: os.environ/DATABRICKS_API_KEY
+      api_base: os.environ/DATABRICKS_API_BASE
+EOF
+)
+fi
+
 cat > "$PROXY_DIR/config.yaml" <<EOF
 # LiteLLM proxy: exposes an Anthropic /v1/messages endpoint that Claude Code
 # talks to, and translates each request to the Azure Databricks serving
-# endpoint "$ENDPOINT". Credentials are injected from $PROXY_DIR/.env at
-# runtime (DATABRICKS_API_KEY / DATABRICKS_API_BASE); no secrets live here.
+# endpoints "$ENDPOINT" (main) and "$FAST_ENDPOINT" (small/fast). Credentials
+# are injected from $PROXY_DIR/.env at runtime (DATABRICKS_API_KEY /
+# DATABRICKS_API_BASE); no secrets live here.
 model_list:
   - model_name: $ENDPOINT
     litellm_params:
       model: databricks/$ENDPOINT
       api_key: os.environ/DATABRICKS_API_KEY
       api_base: os.environ/DATABRICKS_API_BASE
-  # Catch-all: any other model name Claude Code may request (e.g. a background
-  # "small/fast" model) is routed to the same Databricks endpoint.
+$FAST_ENTRY
+  # Catch-all: any other model name Claude Code may request is routed to the
+  # main Databricks endpoint.
   - model_name: "*"
     litellm_params:
       model: databricks/$ENDPOINT
@@ -129,16 +151,23 @@ general_settings:
 EOF
 ok "wrote $PROXY_DIR/config.yaml"
 
-# LiteLLM pre-call hook: strip Anthropic 'thinking' content Claude Code replays
-# in history (Databricks rejects the resulting thinking_blocks/reasoning_content).
+# LiteLLM pre-call hook: make Claude Code requests Databricks-compatible —
+# strip replayed 'thinking' content and translate stop_sequences -> stop.
 cat > "$PROXY_DIR/custom_handlers.py" <<'PYEOF'
-"""Strip Anthropic 'thinking' content before the Databricks upstream call.
+"""LiteLLM proxy hook: make Claude Code requests compatible with Databricks.
 
-Claude Code (extended thinking) replays prior assistant 'thinking' blocks in the
-conversation history. LiteLLM forwards them to Databricks as `thinking_blocks` /
-`reasoning_content`, which the Databricks serving endpoint rejects with
-`messages.N.thinking_blocks: Extra inputs are not permitted`. Remove that
-reasoning content from every message so the upstream request validates.
+Two Anthropic-isms that the Databricks serving endpoint rejects are fixed here,
+in a single pre-call hook, before the upstream `/invocations` request:
+
+1. `thinking_blocks` / `reasoning_content` — Claude Code (extended thinking)
+   replays prior assistant 'thinking' blocks in the conversation history.
+   Databricks rejects them with
+   `messages.N.thinking_blocks: Extra inputs are not permitted`.
+
+2. `stop_sequences` — Claude Code (including its small/fast "classifier"
+   background calls) sends the Anthropic `stop_sequences` field. Databricks
+   rejects it with `Cannot specify parameter stop_sequences, use stop instead.`
+   so we translate it to the OpenAI-style `stop`.
 """
 
 from litellm.integrations.custom_logger import CustomLogger
@@ -146,10 +175,32 @@ from litellm.integrations.custom_logger import CustomLogger
 _THINKING_TYPES = {"thinking", "redacted_thinking"}
 
 
-class StripThinkingBlocks(CustomLogger):
+class DatabricksCompatHook(CustomLogger):
+    @staticmethod
+    def _fix_stop(container):
+        """Translate Anthropic `stop_sequences` to the OpenAI-style `stop`.
+
+        Databricks also rejects whitespace-only stop sequences, so drop those;
+        if none remain, omit `stop` entirely rather than send an invalid value.
+        """
+        if not isinstance(container, dict) or "stop_sequences" not in container:
+            return
+        seq = container.pop("stop_sequences")
+        if isinstance(seq, str):
+            seq = [seq]
+        if isinstance(seq, list):
+            seq = [s for s in seq if isinstance(s, str) and s.strip()]
+        else:
+            seq = None
+        if seq and not container.get("stop"):
+            container["stop"] = seq
+
     def _clean(self, data):
         if not isinstance(data, dict):
             return data
+        # stop_sequences can sit at the top level and/or under optional_params.
+        self._fix_stop(data)
+        self._fix_stop(data.get("optional_params"))
         messages = data.get("messages")
         if isinstance(messages, list):
             for msg in messages:
@@ -164,6 +215,7 @@ class StripThinkingBlocks(CustomLogger):
                         for block in content
                         if not (isinstance(block, dict) and block.get("type") in _THINKING_TYPES)
                     ]
+                    # Never leave an assistant turn with empty content.
                     msg["content"] = filtered if filtered else ""
         return data
 
@@ -171,7 +223,7 @@ class StripThinkingBlocks(CustomLogger):
         return self._clean(data)
 
 
-proxy_handler_instance = StripThinkingBlocks()
+proxy_handler_instance = DatabricksCompatHook()
 PYEOF
 ok "wrote $PROXY_DIR/custom_handlers.py"
 
@@ -205,7 +257,7 @@ ok "wrote $PROXY_DIR/start-proxy.sh"
 log "5/7 Point Claude Code at the proxy ($CLAUDE_SETTINGS)"
 mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
 [ -f "$CLAUDE_SETTINGS" ] && cp "$CLAUDE_SETTINGS" "$CLAUDE_SETTINGS.bak.$(date +%s)" && ok "backed up existing settings"
-CLAUDE_SETTINGS="$CLAUDE_SETTINGS" PORT="$PORT" MASTER_KEY="$MASTER_KEY" ENDPOINT="$ENDPOINT" \
+CLAUDE_SETTINGS="$CLAUDE_SETTINGS" PORT="$PORT" MASTER_KEY="$MASTER_KEY" ENDPOINT="$ENDPOINT" ENDPOINT_FAST="$FAST_ENDPOINT" \
 "$VENV/bin/python" - <<'PY'
 import json, os
 path = os.environ["CLAUDE_SETTINGS"]
@@ -219,7 +271,7 @@ env.update({
     "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{os.environ['PORT']}",
     "ANTHROPIC_AUTH_TOKEN": os.environ["MASTER_KEY"],
     "ANTHROPIC_MODEL": os.environ["ENDPOINT"],
-    "ANTHROPIC_SMALL_FAST_MODEL": os.environ["ENDPOINT"],
+    "ANTHROPIC_SMALL_FAST_MODEL": os.environ["ENDPOINT_FAST"],
 })
 data["env"] = env
 with open(path, "w") as f:
@@ -291,6 +343,18 @@ if [ "$AUTOSTART" = "1" ]; then
   else
     warn "/v1/messages test did not return an Anthropic message. Response:"
     echo "    $RESP"
+  fi
+  if [ "$FAST_ENDPOINT" != "$ENDPOINT" ]; then
+    RESP_FAST="$(curl -s "http://127.0.0.1:$PORT/v1/messages" \
+      -H "Authorization: Bearer $MASTER_KEY" -H "Content-Type: application/json" \
+      -H "anthropic-version: 2023-06-01" \
+      -d "{\"model\":\"$FAST_ENDPOINT\",\"max_tokens\":20,\"messages\":[{\"role\":\"user\",\"content\":\"Reply with: OK\"}]}")"
+    if echo "$RESP_FAST" | grep -q '"type": *"message"'; then
+      ok "small/fast model '$FAST_ENDPOINT' round-trip OK"
+    else
+      warn "small/fast model '$FAST_ENDPOINT' did not return an Anthropic message. Response:"
+      echo "    $RESP_FAST"
+    fi
   fi
 fi
 
