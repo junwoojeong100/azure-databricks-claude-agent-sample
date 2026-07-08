@@ -153,6 +153,7 @@ scripts/setup_claude_code_databricks.sh
 | `CLAUDE_SETTINGS` | `~/.claude/settings.json` | Claude Code 설정 경로 |
 | `ENV_FILE` | 리포 `.env` | 자격증명 소스 파일 |
 | `FORCE` | `0` | `1`이면 litellm 재설치 |
+| `DATABRICKS_FAST_ENDPOINT` | `databricks-claude-haiku-4-5` | 분류기(small/fast) 모델 엔드포인트 |
 
 ---
 
@@ -160,7 +161,7 @@ scripts/setup_claude_code_databricks.sh
 
 | 위치 | 역할 |
 | --- | --- |
-| `~/.claude-databricks/config.yaml` | LiteLLM 라우팅(엔드포인트 + 와일드카드 `*` → `databricks/<endpoint>`) |
+| `~/.claude-databricks/config.yaml` | LiteLLM 라우팅(메인 엔드포인트 + 분류기(small/fast) 엔드포인트 + 와일드카드 `*` → `databricks/<endpoint>`) |
 | `~/.claude-databricks/custom_handlers.py` | 프리콜 훅 — Databricks가 거부하는 `thinking_blocks`/`reasoning_content` 제거 |
 | `~/.claude-databricks/.env` (0600) | 프록시 전용 자격증명(`DATABRICKS_API_KEY`/`DATABRICKS_API_BASE`/`LITELLM_MASTER_KEY`) |
 | `~/.claude-databricks/start-proxy.sh` (Windows는 `start-proxy.ps1`) | 프록시 실행 스크립트 |
@@ -177,7 +178,7 @@ scripts/setup_claude_code_databricks.sh
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:4000",
     "ANTHROPIC_AUTH_TOKEN": "sk-databricks-local",
     "ANTHROPIC_MODEL": "databricks-claude-opus-4-8",
-    "ANTHROPIC_SMALL_FAST_MODEL": "databricks-claude-opus-4-8"
+    "ANTHROPIC_SMALL_FAST_MODEL": "databricks-claude-haiku-4-5"
   }
 }
 ```
@@ -186,6 +187,10 @@ scripts/setup_claude_code_databricks.sh
   `config.yaml`의 `master_key`와 일치해야 합니다(클라우드 비밀 아님).
 - 이 토큰이 활성인 동안 Claude Code는 claude.ai 구독 대신 프록시(→ Databricks)를
   사용합니다.
+- `ANTHROPIC_SMALL_FAST_MODEL`은 Claude Code가 요약·제목 생성·분류(classifier) 등
+  가벼운 백그라운드 작업에 쓰는 **small/fast 모델**입니다. 기본값은 가벼운
+  `databricks-claude-haiku-4-5`이며 `DATABRICKS_FAST_ENDPOINT`로 바꿀 수 있습니다.
+  이 값은 Claude Code 시작 시 로드되므로, 변경하면 Claude Code를 재시작해야 반영됩니다.
 
 ---
 
@@ -212,11 +217,19 @@ umask 022
 # 3) 라우팅 설정
 cat > config.yaml <<'EOF'
 model_list:
+  # 메인 모델 (ANTHROPIC_MODEL)
   - model_name: databricks-claude-opus-4-8
     litellm_params:
       model: databricks/databricks-claude-opus-4-8
       api_key: os.environ/DATABRICKS_API_KEY
       api_base: os.environ/DATABRICKS_API_BASE
+  # 분류기(small/fast) 모델 (ANTHROPIC_SMALL_FAST_MODEL)
+  - model_name: databricks-claude-haiku-4-5
+    litellm_params:
+      model: databricks/databricks-claude-haiku-4-5
+      api_key: os.environ/DATABRICKS_API_KEY
+      api_base: os.environ/DATABRICKS_API_BASE
+  # 그 외 모델명은 모두 메인 엔드포인트로
   - model_name: "*"
     litellm_params:
       model: databricks/databricks-claude-opus-4-8
@@ -229,17 +242,33 @@ general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
 EOF
 
-# 3b) thinking 블록 제거 훅 (Databricks가 거부하는 thinking_blocks/reasoning_content 제거)
+# 3b) 호환 훅 (Databricks가 거부하는 thinking_blocks/reasoning_content 제거 +
+#     Anthropic stop_sequences → OpenAI stop 변환)
 cat > custom_handlers.py <<'PYEOF'
 from litellm.integrations.custom_logger import CustomLogger
 
 _THINKING_TYPES = {"thinking", "redacted_thinking"}
 
 
-class StripThinkingBlocks(CustomLogger):
+class DatabricksCompatHook(CustomLogger):
+    @staticmethod
+    def _fix_stop(c):
+        # Databricks는 Anthropic의 stop_sequences를 거부 → OpenAI식 stop으로 변환
+        # (공백만 있는 시퀀스는 제거하고, 남는 게 없으면 stop 자체를 생략)
+        if not isinstance(c, dict) or "stop_sequences" not in c:
+            return
+        seq = c.pop("stop_sequences")
+        if isinstance(seq, str):
+            seq = [seq]
+        seq = [s for s in seq if isinstance(s, str) and s.strip()] if isinstance(seq, list) else None
+        if seq and not c.get("stop"):
+            c["stop"] = seq
+
     def _clean(self, data):
         if not isinstance(data, dict):
             return data
+        self._fix_stop(data)
+        self._fix_stop(data.get("optional_params"))
         for msg in (data.get("messages") or []):
             if not isinstance(msg, dict):
                 continue
@@ -256,7 +285,7 @@ class StripThinkingBlocks(CustomLogger):
         return self._clean(data)
 
 
-proxy_handler_instance = StripThinkingBlocks()
+proxy_handler_instance = DatabricksCompatHook()
 PYEOF
 
 # 4) 실행 스크립트
@@ -274,7 +303,8 @@ Claude Code 설정(`~/.claude/settings.json`)에 [§4의 `env` 블록](#4-설치
 추가합니다(기존 파일이 있으면 `env` 키만 병합).
 
 엔드포인트 이름이 다르면 `config.yaml`의 `databricks/<endpoint>`와 설정의
-`ANTHROPIC_MODEL`을 실제 엔드포인트 이름으로 바꾸세요.
+`ANTHROPIC_MODEL`(메인)·`ANTHROPIC_SMALL_FAST_MODEL`(분류기)을 실제 엔드포인트
+이름으로 바꾸세요.
 
 ---
 
@@ -398,6 +428,7 @@ Claude Code 안에서 `/status`를 실행하면 `Anthropic base URL`이
 | `Address already in use` | 같은 포트를 쓰는 인스턴스 중복(서비스 + 수동). `lsof -nP -iTCP:4000 -sTCP:LISTEN -t`로 PID 확인 후 하나만 남김. |
 | `403` / `rate limit of 0` | Databricks 계정에 Anthropic 서빙 용량 미할당(고객 설정으로 해결 불가). `README.md` 문제 해결 절 참고. |
 | `messages.N.thinking_blocks: Extra inputs are not permitted` | Claude Code가 이력에 재전송한 thinking 블록을 Databricks가 거부. `custom_handlers.py`(프리콜 훅)가 제거합니다 — 이 파일이 있고 `config.yaml`에 `callbacks`가 설정됐는지 확인 후 프록시 재시작. |
+| `Cannot specify parameter stop_sequences, use stop instead` | Claude Code(특히 분류기/백그라운드 호출)가 보내는 Anthropic `stop_sequences`를 Databricks가 거부. `custom_handlers.py`(프리콜 훅)가 이를 `stop`으로 변환합니다 — 이 파일이 최신인지(§4/§5) 확인 후 프록시 재시작. |
 | `401` / 인증 실패 | ① Claude Code의 `ANTHROPIC_AUTH_TOKEN`과 `config.yaml`의 `master_key` 불일치, 또는 ② `.env`의 Databricks 토큰 만료/무효. 갱신 후 프록시 재시작. |
 | `.env` 변경 미반영 | 프록시 재시작 필요(§6). 프로세스는 시작 시점에만 `.env`를 읽음. |
 | 로그 위치 | `~/.claude-databricks/proxy.log` |
