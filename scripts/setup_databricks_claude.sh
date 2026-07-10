@@ -5,7 +5,7 @@
 # Automates from an empty subscription and reuses a valid repo .env PAT on reruns:
 #   1. Resource group
 #   2. Azure Databricks workspace
-#   3. Databricks PAT (via your Azure AD login) + .env
+#   3. Databricks PAT (via your Microsoft Entra ID login) + .env
 #   4. Serving-endpoint verification
 #   5. Model connection test through the supported OpenAI-compatible route,
 #      plus the native Anthropic Messages API for Claude
@@ -43,9 +43,8 @@ FALLBACK="${FALLBACK:-databricks-meta-llama-3-3-70b-instruct}"  # proves pipelin
 PAT_LIFETIME_SECONDS="${PAT_LIFETIME_SECONDS:-7776000}"    # 90 days
 ROTATE_PAT="${ROTATE_PAT:-0}"                              # 1 creates a new PAT
 RUN_AGENT="${RUN_AGENT:-1}"                                 # run the sample at the end
-ACCOUNT_DIAG="${ACCOUNT_DIAG:-1}"                           # optional databricks-sdk
 
-# Azure AD application ID for the AzureDatabricks login service (fixed value).
+# Microsoft Entra application ID for the AzureDatabricks login service (fixed value).
 DBX_AAD_RESOURCE="2ff814a6-3304-4ab8-85cb-cd0e6f879c1d"
 
 set -euo pipefail
@@ -222,39 +221,7 @@ EOF
 chmod 600 "$ROOT/.env"
 umask "$OLD_UMASK"
 ok ".env written (HOST + $ENDPOINT + $TOKEN_ACTION PAT). PAT length: ${#TOKEN}"
-
-# ---------------------------------------------------------------------------
-if [ "$ACCOUNT_DIAG" = "1" ]; then
-  log "3b/6 Account diagnostic (best-effort)"
-  DIAG_HOST="$HOST" DIAG_TOKEN="$TOKEN" "$PY" - <<'PY' || warn "account diagnostic skipped"
-import os
-import sys
-
-host = os.environ["DIAG_HOST"]
-token = os.environ["DIAG_TOKEN"]
-try:
-    from databricks.sdk import WorkspaceClient, AccountClient
-except Exception:
-    print("  (databricks-sdk not installed: pip install databricks-sdk to enable)")
-    sys.exit(0)
-try:
-    w = WorkspaceClient(host=host, token=token)
-    acc = getattr(w.config, "account_id", None)
-    print(f"  account_id: {acc}")
-    if not acc:
-        sys.exit(0)
-    a = AccountClient(host="https://accounts.azuredatabricks.net", account_id=acc, auth_type="azure-cli")
-    for name in ("llm_proxy_partner_powered_account", "llm_proxy_partner_powered_enforce"):
-        try:
-            cur = getattr(a.settings, name).get()
-            bv = getattr(cur, "boolean_val", None)
-            print(f"  {name}: {getattr(bv, 'value', bv)}")
-        except Exception as e:
-            print(f"  {name}: (needs account admin) {str(e)[:80]}")
-except Exception as e:
-    print(f"  (skipped: {str(e)[:100]})")
-PY
-fi
+warn "This PAT is for local development. Prefer service-principal OAuth M2M in production."
 
 # ---------------------------------------------------------------------------
 log "4/6 Verify serving endpoints"

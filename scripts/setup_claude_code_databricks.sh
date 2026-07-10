@@ -154,7 +154,7 @@ load_env_file
 : "${DATABRICKS_TOKEN:?DATABRICKS_TOKEN is required (in .env or the environment)}"
 
 ENDPOINT="${DATABRICKS_SERVING_ENDPOINT:-databricks-claude-opus-4-8}"
-MODELS="${DATABRICKS_MODELS:-databricks-claude-opus-4-8 databricks-claude-sonnet-5 databricks-claude-haiku-4-5}"
+MODELS="${DATABRICKS_MODELS:-databricks-claude-opus-4-8 databricks-claude-sonnet-5 databricks-claude-haiku-4-5 databricks-claude-fable-5}"
 MODELS="${MODELS//,/ }"
 ANTHROPIC_BASE_URL="${DATABRICKS_HOST%/}/serving-endpoints/anthropic"
 
@@ -206,7 +206,11 @@ fi
 FAST_ENDPOINT="${DATABRICKS_FAST_ENDPOINT:-databricks-claude-haiku-4-5}"
 ok "native Anthropic API: $ANTHROPIC_BASE_URL"
 ok "default model: $ENDPOINT   Haiku/background: $FAST_ENDPOINT"
-ok "Claude Code: $(claude --version 2>/dev/null | head -1)"
+CLAUDE_VERSION="$(claude --version 2>/dev/null | head -1)"
+ok "Claude Code: $CLAUDE_VERSION"
+if ! "$PYTHON" -c 'import re,sys; m=re.search(r"\d+(?:\.\d+){2}", sys.argv[1]); raise SystemExit(0 if m and tuple(map(int, m.group().split("."))) >= (2, 1, 197) else 1)' "$CLAUDE_VERSION"; then
+  warn "Claude Code 2.1.197+ is recommended for the default Sonnet 5 mapping"
+fi
 
 log "3/6 Verify native Anthropic API"
 if native_request "$ENDPOINT"; then
@@ -274,11 +278,12 @@ if [ -f "$CLAUDE_SETTINGS" ]; then
   ok "backed up existing Claude settings"
 fi
 
-DEFAULT_OPUS=""; DEFAULT_SONNET=""; DEFAULT_HAIKU="$FAST_ENDPOINT"
+DEFAULT_OPUS=""; DEFAULT_SONNET=""; DEFAULT_HAIKU="$FAST_ENDPOINT"; DEFAULT_FABLE=""
 for model in $VALID_MODELS; do
   case "$model" in
     *opus*)   [ -n "$DEFAULT_OPUS" ]   || DEFAULT_OPUS="$model" ;;
     *sonnet*) [ -n "$DEFAULT_SONNET" ] || DEFAULT_SONNET="$model" ;;
+    *fable*)  [ -n "$DEFAULT_FABLE" ]  || DEFAULT_FABLE="$model" ;;
   esac
 done
 [ -n "$DEFAULT_OPUS" ] || DEFAULT_OPUS="$ENDPOINT"
@@ -292,6 +297,7 @@ FAST_ENDPOINT="$FAST_ENDPOINT" \
 DEFAULT_OPUS="$DEFAULT_OPUS" \
 DEFAULT_SONNET="$DEFAULT_SONNET" \
 DEFAULT_HAIKU="$DEFAULT_HAIKU" \
+DEFAULT_FABLE="$DEFAULT_FABLE" \
 "$PYTHON" - <<'PY'
 import json
 import os
@@ -322,6 +328,7 @@ env.pop("ANTHROPIC_SMALL_FAST_MODEL", None)
 env.pop("ANTHROPIC_DEFAULT_OPUS_MODEL", None)
 env.pop("ANTHROPIC_DEFAULT_SONNET_MODEL", None)
 env.pop("ANTHROPIC_DEFAULT_HAIKU_MODEL", None)
+env.pop("ANTHROPIC_DEFAULT_FABLE_MODEL", None)
 env.update(
     {
         "ANTHROPIC_BASE_URL": os.environ["ANTHROPIC_BASE_URL"],
@@ -350,6 +357,7 @@ for source, target in (
     ("DEFAULT_OPUS", "ANTHROPIC_DEFAULT_OPUS_MODEL"),
     ("DEFAULT_SONNET", "ANTHROPIC_DEFAULT_SONNET_MODEL"),
     ("DEFAULT_HAIKU", "ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+    ("DEFAULT_FABLE", "ANTHROPIC_DEFAULT_FABLE_MODEL"),
 ):
     value = os.environ.get(source, "")
     if value:

@@ -18,7 +18,8 @@
 3. **LiteLLM 프록시, 로컬 포트, 백그라운드 서비스가 필요하지 않습니다.**
 4. Claude Code가 보내는 미지원 beta 헤더를 막기 위해
    `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`이 필요합니다.
-5. Anthropic hosted `WebSearch`는 Databricks가 지원하지 않으므로 bare
+5. Anthropic hosted `WebSearch`는 현재 Databricks 네이티브 경로에서 지원이 문서화돼
+   있지 않고 실제 `web_search_20250305` 호출도 거부되므로 bare
    `permissions.deny: ["WebSearch"]`로 숨기고, 필요하면 MCP 검색을 사용합니다.
 
 ```text
@@ -34,10 +35,13 @@ Claude Code ──(Anthropic /v1/messages)──► Azure Databricks
 - Databricks-hosted Claude 모델
   - 기본: `databricks-claude-opus-4-8`
   - Haiku/백그라운드: `databricks-claude-haiku-4-5`
+  - Fable 후보: `databricks-claude-fable-5` (현재 workspace에서 실제 호출이 성공할 때만 매핑)
 - 모델 호출 권한이 있는 Databricks 인증 정보
-  - 개발: PAT
+  - 개발: PAT(legacy; 가능하면 서비스 주체 PAT)
   - 운영: OAuth M2M 권장
-- Claude Code CLI
+- 일반 endpoint ACL의 `CAN QUERY`; Foundation Model UC 권한 기능 사용 시 대상
+  `system.ai` 모델의 `EXECUTE`
+- Claude Code CLI 2.1.197 이상 권장(Sonnet 5 기준)
 
 Anthropic 모델 호출이 `403 ... rate limit of 0`으로 거부되면 README의 모델/리전,
 cross-Geo, rate limit, 권한, 계정 용량 점검 순서를 확인합니다.
@@ -53,6 +57,7 @@ cross-Geo, rate limit, 권한, 계정 용량 점검 순서를 확인합니다.
 | `ANTHROPIC_MODEL` | 기본 Claude 모델 |
 | `ANTHROPIC_DEFAULT_OPUS_MODEL` / `ANTHROPIC_DEFAULT_SONNET_MODEL` | `/model`의 Opus/Sonnet 프리셋 매핑 |
 | `ANTHROPIC_DEFAULT_HAIKU_MODEL` | Haiku 프리셋과 요약·분류 등 백그라운드 모델 |
+| `ANTHROPIC_DEFAULT_FABLE_MODEL` | Fable endpoint가 실제 검증된 경우에만 설정 |
 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | 반드시 `1`; 미지원 beta 헤더 방지 |
 | `permissions.deny` | 기존 규칙을 보존하고 bare `WebSearch` 추가 |
 
@@ -60,6 +65,9 @@ cross-Geo, rate limit, 권한, 계정 용량 점검 순서를 확인합니다.
 > 권장합니다. 자동 설정 스크립트는 0600 파일과 `apiKeyHelper`를 사용합니다.
 > 자동 설정기는 PAT helper만 생성합니다. OAuth M2M은 별도 단기 토큰 helper가 필요합니다.
 > 선택 모델 검증이 실패한 family는 검증된 기본 또는 Haiku 모델로 fallback합니다.
+> Fable은 다른 family로 조용히 대체하지 않으며, 검증에 실패하면 mapping을 만들지 않습니다.
+> custom `ANTHROPIC_BASE_URL`에서는 MCP tool search와 Remote Control이 기본
+> 비활성화됩니다. 일반 MCP 서버 사용과는 별개입니다.
 
 ---
 
@@ -74,10 +82,12 @@ cross-Geo, rate limit, 권한, 계정 용량 점검 순서를 확인합니다.
 - `stop_sequences`
 - Anthropic `tool_use`
 - Opus/Sonnet/Haiku 모델 ID 전달
+- Fable endpoint는 리전·계정별 가용성을 검증한 뒤에만 mapping
 
-Anthropic hosted `web_search_20250305`는 실제 호출에서 HTTP 400으로 거부됨을 확인했습니다.
-이는 일반적인 로컬 `tool_use` 지원과 별개이며, 설치 스크립트가 `WebSearch`를 모델 컨텍스트에서
-제거합니다.
+Anthropic hosted `web_search_20250305`는 실제 호출에서 HTTP 400으로 거부됨을
+확인했습니다. Claude Code 버전에 따라 hosted tool 버전 문자열은 달라질 수 있습니다.
+이는 일반적인 로컬 `tool_use` 지원과 별개이며, 설치 스크립트가 `WebSearch`를 모델
+컨텍스트에서 제거합니다.
 
 Python Agent Framework는 Claude Code와 별개입니다. Agent Framework가 대화 이력에
 추가하는 OpenAI `name` 필드를 Databricks Claude가 거부하므로
@@ -85,15 +95,18 @@ Python Agent Framework는 Claude Code와 별개입니다. Agent Framework가 대
 
 ---
 
-## 4. Unity AI Gateway와의 차이
+## 4. 두 AI Gateway와의 차이
 
-| 경로 | 상태 | 용도 |
+| 경로/기능 | 상태 | 용도 |
 | --- | --- | --- |
-| `/serving-endpoints/anthropic` | 현재 기본 | Databricks-hosted Claude 네이티브 API |
-| `/ai-gateway/anthropic` | Unity AI Gateway Beta (v2 API) | Unity Catalog 권한, 예산, guardrail, fallback, 통합 관측 |
+| `/serving-endpoints/anthropic` | 이 리포의 직접 연결 | Databricks-hosted Claude 네이티브 API |
+| Serving endpoint의 **AI Gateway** | 이전 세대 endpoint 기능 | usage tracking, rate limit, payload logging, guardrail |
+| `/ai-gateway/anthropic` | Unity AI Gateway Beta | Unity Catalog model service, 예산, service policy, routing, 통합 관측 |
 
-Unity AI Gateway Beta는 **필수 조건이 아닙니다**. v2 API가 `404 FEATURE_DISABLED`여도
-`/serving-endpoints/anthropic` 직접 연결은 사용할 수 있습니다.
+Unity AI Gateway Beta는 **필수 조건이 아닙니다**. Preview가 꺼져 있어도
+`/serving-endpoints/anthropic` 직접 연결은 사용할 수 있습니다. 이전 세대 endpoint
+gateway에서 pay-per-token endpoint의 fallback/traffic splitting은 지원되지 않으므로
+새 Unity AI Gateway routing 기능과 구분합니다.
 
 Beta가 활성화된 환경에서는 Databricks `ucode`가 사용자 OAuth와 Claude 설정을
 자동화합니다. Python 3.12 이상과 `uv`가 필요합니다.
@@ -124,12 +137,15 @@ ucode claude
 ## 최종 체크리스트
 
 - [ ] Databricks Claude 모델을 직접 호출할 수 있음
+- [ ] Claude Code 2.1.197 이상 또는 선택 모델별 최소 버전 확인
 - [ ] `ANTHROPIC_BASE_URL`이 `/serving-endpoints/anthropic`을 가리킴
 - [ ] 토큰이 `settings.json`이 아닌 보호된 helper 파일 또는 OAuth로 제공됨
 - [ ] 셸/프로필에 `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`가 남아 있지 않음
 - [ ] `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`
 - [ ] `permissions.deny`에 bare `WebSearch`가 있음
 - [ ] Haiku 백그라운드 모델과 `/model` 프리셋 매핑 확인
+- [ ] Fable은 endpoint 검증이 성공한 환경에서만 매핑됨
 - [ ] Claude Code 단일/다중 턴 검증
+- [ ] custom base URL에서 Remote Control/MCP tool search 제한을 인지함
 - [ ] 이전 LiteLLM 자동 시작 서비스 중지
 - [ ] 운영 환경은 PAT 대신 OAuth M2M 검토
