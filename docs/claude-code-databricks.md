@@ -4,6 +4,11 @@ Azure Databricks Model Serving은 현재 **네이티브 Anthropic Messages API**
 따라서 Claude Code를 Databricks-hosted Claude에 연결할 때 로컬 LiteLLM 프록시는
 필요하지 않습니다.
 
+이 문서의 직접 연결은 Claude Code의 범용 `ANTHROPIC_BASE_URL`을 사용하는 custom
+gateway 구성입니다. Claude Code의 내장 first-party provider 목록에 Databricks가
+추가된 것은 아닙니다. Databricks가 coding-agent 통합에 권장하는 Unity AI Gateway 경로는
+[§7](#7-두-ai-gateway-경로-구분)의 `ucode`를 사용합니다.
+
 ```text
 Claude Code ──(Anthropic /v1/messages)──► Azure Databricks Model Serving
                                            /serving-endpoints/anthropic
@@ -30,14 +35,16 @@ POST https://<workspace>/serving-endpoints/anthropic/v1/messages
 
 | 방식 | 경로 | LiteLLM |
 | --- | --- | --- |
-| **현재 권장** | `/serving-endpoints/anthropic/v1/messages` | 불필요 |
-| Unity AI Gateway (Beta, v2 API) | `/ai-gateway/anthropic/v1/messages` | 불필요 |
+| **이 가이드의 직접 연결** | `/serving-endpoints/anthropic/v1/messages` | 불필요 |
+| Unity AI Gateway model service (Beta) | `/ai-gateway/anthropic/v1/messages` | 불필요 |
 | 이전 모델별 호출 | `/serving-endpoints/<model>/invocations` | Claude Code에는 변환 필요 |
 
 공식 문서:
 
 - [Query with the Anthropic Messages API](https://learn.microsoft.com/azure/databricks/machine-learning/model-serving/query-anthropic-messages)
 - [Provider native APIs](https://learn.microsoft.com/azure/databricks/machine-learning/model-serving/provider-native-apis)
+- [Databricks-hosted foundation models](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/supported-models)
+- [Region별 Foundation Model 가용성](https://learn.microsoft.com/azure/databricks/machine-learning/model-serving/foundation-model-overview)
 
 ---
 
@@ -45,15 +52,22 @@ POST https://<workspace>/serving-endpoints/anthropic/v1/messages
 
 1. **Azure Databricks 워크스페이스와 Claude 모델**
    - 예: `databricks-claude-opus-4-8`
-   - 모델/리전 가용성은
-     [지원 모델 문서](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/supported-models)를 확인합니다.
+   - [지원 모델](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/supported-models)과
+     [리전별 가용성](https://learn.microsoft.com/azure/databricks/machine-learning/model-serving/foundation-model-overview)을
+     함께 확인합니다. Anthropic Messages 전용 문서의 모델 목록은 일반 model catalog보다
+     늦게 갱신될 수 있으므로 실제 smoke test도 수행합니다.
 2. **Databricks 인증 정보**
-   - 개발/검증: 대상 모델을 호출할 수 있는 PAT
+   - 개발/검증: 대상 모델을 호출할 수 있는 PAT(legacy). 가능하면 사용자 PAT보다
+     서비스 주체 PAT를 사용합니다.
    - 운영: 서비스 주체의 OAuth M2M 권장
+   - 일반 endpoint ACL의 `CAN QUERY`가 필요하며, Foundation Model Unity Catalog 권한
+     기능을 활성화했다면 대상 `system.ai` 모델의 `EXECUTE`도 필요합니다.
 3. **Claude Code**
    ```bash
    claude --version
    ```
+   - 이 가이드의 기본 Sonnet 5 매핑까지 사용하려면 2.1.197 이상을 권장합니다.
+   - 최소 버전은 Opus 4.8이 2.1.154, Fable 5가 2.1.170, Sonnet 5가 2.1.197입니다.
 4. **이 리포의 `.env`**
    ```bash
    cp .env.example .env
@@ -71,7 +85,7 @@ DATABRICKS_TOKEN=dapi...
 
 ```dotenv
 DATABRICKS_FAST_ENDPOINT=databricks-claude-haiku-4-5
-DATABRICKS_MODELS="databricks-claude-opus-4-8 databricks-claude-sonnet-5 databricks-claude-haiku-4-5"
+DATABRICKS_MODELS="databricks-claude-opus-4-8 databricks-claude-sonnet-5 databricks-claude-haiku-4-5 databricks-claude-fable-5"
 ```
 
 ---
@@ -111,7 +125,7 @@ scripts/setup_claude_code_databricks.sh
 2. `curl`·Python·Claude Code와 충돌하는 ambient credential 사전 점검
 3. 네이티브 `/serving-endpoints/anthropic/v1/messages`와 모델 fallback 검증
 4. Databricks 토큰을 사용자 전용 파일에 저장
-5. `apiKeyHelper`, 모델 프리셋, 미지원 beta 헤더 제거 설정
+5. `apiKeyHelper`, 검증된 모델 프리셋, 미지원 beta 헤더 제거 설정
 6. Databricks가 지원하지 않는 Anthropic hosted `WebSearch` 도구 비활성화
 7. 이전 LiteLLM launchd/systemd/Scheduled Task가 있으면 비활성화
 8. Claude Code를 실제로 실행해 종단 간 검증
@@ -152,11 +166,13 @@ scripts/setup_claude_code_databricks.sh
 ```
 
 Windows의 `apiKeyHelper`는 `powershell.exe ... get-token.ps1` 명령으로 저장됩니다.
+Fable endpoint 검증까지 성공하면 `ANTHROPIC_DEFAULT_FABLE_MODEL`도 추가됩니다.
 
 ### `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`이 필요한 이유
 
 Claude Code는 기본적으로 일부 Anthropic beta 헤더를 보낼 수 있습니다. Databricks
-네이티브 Anthropic API는 지원하지 않는 beta 헤더를 다음과 같이 거부합니다.
+네이티브 Anthropic API는 지원하지 않는 beta 헤더나 필드를 거부할 수 있습니다. 이
+리포의 검증에서는 다음과 같은 응답을 관찰했습니다.
 
 ```text
 400 {"message":"invalid beta flag"}
@@ -167,7 +183,9 @@ Claude Code는 기본적으로 일부 Anthropic beta 헤더를 보낼 수 있습
 ### `WebSearch`를 비활성화하는 이유
 
 일반 Claude Code 도구 호출은 네이티브 API에서 동작하지만, Anthropic의 hosted
-`web_search_20250305` 도구 형식은 Databricks 모델이 지원하지 않아 HTTP 400을 반환합니다.
+`WebSearch`는 현재 Databricks 네이티브 경로에서 지원이 문서화돼 있지 않습니다. 이
+리포는 `web_search_20250305` 호출이 HTTP 400으로 거부되는 것을 확인했으며, Claude
+Code 버전에 따라 hosted tool 버전 문자열은 바뀔 수 있습니다.
 설치기는 기존 `permissions.deny` 규칙을 보존하면서 bare `WebSearch` 규칙을 추가해 이 도구가
 모델에 노출되지 않도록 합니다. 웹 검색이 필요하면 MCP 검색 서버를 등록하거나 Unity AI
 Gateway의 `ucode` 구성을 사용하세요.
@@ -183,10 +201,17 @@ Gateway의 `ucode` 구성을 사용하세요.
 OAuth 로그인이 필요하면 Unity AI Gateway의 `ucode`를 사용하거나, Databricks CLI/SDK가
 발급한 단기 토큰을 반환하는 별도 `apiKeyHelper`를 운영해야 합니다.
 
-> 검증한 Claude Code 2.1.206에서는 `apiKeyHelper`가 일반
-> `CLAUDE_CONFIG_DIR/settings.json`에서 정상 동작했지만, `--settings <custom.json>`만으로
-> 실행하면 인증 정보가 전달되지 않았습니다. Helper 인증을 사용할 때는 기본 설정 위치 또는
-> `CLAUDE_CONFIG_DIR`을 사용하세요.
+### Custom base URL에서 달라지는 Claude Code 기능
+
+Claude Code는 `ANTHROPIC_BASE_URL`이 `api.anthropic.com`이 아닌 호스트를 가리키면 MCP
+tool search를 기본 비활성화하고 Remote Control도 비활성화합니다. Databricks 경로가
+`tool_reference` block을 전달한다는 보장이 없으므로 `ENABLE_TOOL_SEARCH=true`를
+임의로 켜지 마세요. 일반 MCP 서버와 로컬 도구 호출은 이 제한과 별개입니다.
+
+`--settings <custom.json>`은 기존 settings와 병합되며 `apiKeyHelper`도 사용할 수
+있습니다. Claude Code 2.1.206에서 custom settings 파일과 helper 조합을 직접
+검증했습니다. 완전히 격리된 검증이 필요할 때만 `CLAUDE_CONFIG_DIR`을 별도 디렉터리로
+지정하세요.
 
 ---
 
@@ -197,6 +222,7 @@ OAuth 로그인이 필요하면 Unity AI Gateway의 `ucode`를 사용하거나, 
 - `ANTHROPIC_DEFAULT_OPUS_MODEL`
 - `ANTHROPIC_DEFAULT_SONNET_MODEL`
 - `ANTHROPIC_DEFAULT_HAIKU_MODEL`
+- `ANTHROPIC_DEFAULT_FABLE_MODEL` (해당 endpoint가 실제 검증된 경우에만)
 
 `ANTHROPIC_DEFAULT_HAIKU_MODEL`은 `/model haiku`뿐 아니라 요약·분류 등 Claude Code의
 백그라운드 기능에도 사용됩니다. 이전 `ANTHROPIC_SMALL_FAST_MODEL`은 deprecated입니다.
@@ -221,6 +247,13 @@ claude --model databricks-claude-sonnet-5
 설치기는 각 모델을 먼저 호출해 검증합니다. 특정 Opus/Sonnet/Haiku 모델이 현재 리전에서
 실패하면 해당 family 프리셋은 검증된 기본 모델로, Haiku 프리셋은 검증된 Haiku 모델로
 fallback하여 `/model`이 지원되지 않는 Anthropic 기본 ID로 빠지지 않게 합니다.
+Fable은 다른 family로 조용히 대체하지 않고 `databricks-claude-fable-5`가 실제
+검증됐을 때만 매핑합니다. 해당 모델이 없는 workspace에서 `/model fable`을 선택하면
+요청이 실패할 수 있습니다.
+
+Databricks의 현재 Sonnet 5 문서는 `temperature`, `top_p`, `top_k`를 지원하지 않는다고
+명시합니다. 이 리포의 Claude Code 설정과 Python 샘플은 해당 sampling parameter를
+추가하지 않습니다.
 
 ---
 
@@ -265,39 +298,34 @@ claude --model databricks-claude-opus-4-8 \
 
 ---
 
-## 7. Unity AI Gateway는 무엇인가
+## 7. 두 AI Gateway 경로 구분
 
-Unity AI Gateway는 Unity Catalog 기반의 Databricks 관리형 AI 거버넌스 계층입니다.
-로컬에 설치하는 프록시가 아닙니다.
+Databricks 문서에는 이름이 비슷한 두 관리 계층이 있습니다. 둘 다 로컬에 설치하는
+프록시는 아닙니다.
 
-- 모델·Agent·MCP 서비스를 Unity Catalog 권한으로 제어
-- 사용자/그룹별 rate limit과 예산
-- 트래픽 분할과 fallback
-- 요청/응답 guardrail
-- 토큰·비용·지연시간 대시보드
-- Inference Tables를 통한 요청/응답 감사
+| 구분 | 적용 위치 | 이 가이드와의 관계 |
+| --- | --- | --- |
+| **AI Gateway for serving endpoints** (이전 세대) | Serving endpoint 상세 화면 | 이 가이드의 `/serving-endpoints/anthropic` 호출에 usage tracking, rate limit, payload logging, guardrail을 endpoint 단위로 설정 |
+| **Unity AI Gateway** (Beta) | 왼쪽 **AI Gateway** 메뉴의 Unity Catalog model service | `/ai-gateway/anthropic` 경로, service policy, budget, 통합 usage dashboard, traffic splitting/fallback |
 
-새 Unity AI Gateway 환경은 현재 Beta이며 v2 API를 사용합니다. 다음 조건이 필요합니다.
+이전 세대 endpoint gateway에서는 pay-per-token Foundation Model endpoint에 fallback과
+traffic splitting을 적용할 수 없습니다. 새 Unity AI Gateway model service의 routing
+기능과 혼동하지 마세요.
 
-- Account Previews에서 Unity AI Gateway 활성화
+새 Unity AI Gateway에는 다음 조건이 필요합니다.
+
+- Account Console → **Previews**에서 Unity AI Gateway 활성화
 - Unity Catalog 활성화
 - 지원 리전
 
-가용성 확인:
+Beta가 꺼져 있어도 본 문서의 `/serving-endpoints/anthropic` 직접 연결은 사용할 수
+있습니다. Preview 상태는 Account Console과 workspace의 **AI Gateway** 메뉴에서
+확인하세요. 비공개 또는 내부 API 응답만으로 가용성을 판정하지 않습니다.
 
-```bash
-printf 'header = "Authorization: Bearer %s"\n' "$DATABRICKS_TOKEN" |
-curl --config - -sS \
-  "$DATABRICKS_HOST/api/ai-gateway/v2/endpoints?page_size=1"
-```
+### Unity AI Gateway를 사용하는 경우
 
-`404 FEATURE_DISABLED`이면 Unity AI Gateway Beta가 활성화되지 않은 것입니다. 이 경우에도 본 문서의
-`/serving-endpoints/anthropic` 직접 경로는 사용할 수 있습니다.
-
-### Unity AI Gateway Beta가 활성화된 경우
-
-Databricks의 `ucode`가 사용자 OAuth 로그인, 모델 검색, Claude 설정을 자동화합니다.
-`ucode`는 Python 3.12 이상과 `uv`가 필요합니다.
+Databricks가 권장하는 `ucode`가 사용자 OAuth 로그인, 모델 검색, Claude 설정을
+자동화합니다. `ucode`는 Python 3.12 이상과 `uv`가 필요합니다.
 
 ```bash
 uv tool install git+https://github.com/databricks/ucode
@@ -310,10 +338,16 @@ ucode claude
 https://<workspace>/ai-gateway/anthropic
 ```
 
+`ucode` 경로의 model service 사용량은 `system.ai_gateway.usage`와 빌트인 AI Gateway
+dashboard에서 확인합니다. 이 Beta system table은 현재 account admin만 조회할 수
+있습니다. 반면 이전 세대 endpoint usage는 `system.serving.endpoint_usage`와
+`system.serving.served_entities`를 사용합니다.
+
 공식 문서:
 
 - [AI governance with Unity AI Gateway](https://learn.microsoft.com/azure/databricks/ai-gateway/)
 - [Integrate with coding agents](https://learn.microsoft.com/azure/databricks/ai-gateway/coding-agent-integration-model-services)
+- [AI Gateway for serving endpoints](https://learn.microsoft.com/azure/databricks/ai-gateway/overview-serving-endpoints)
 - [`databricks/ucode`](https://github.com/databricks/ucode)
 
 ---
@@ -367,15 +401,16 @@ Remove-Item -Force `
 
 | 증상 | 원인 / 해결 |
 | --- | --- |
-| `400 invalid beta flag` | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` 확인 후 Claude Code 재시작 |
+| 지원하지 않는 `anthropic-beta`/필드 관련 400 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` 확인 후 Claude Code 재시작 |
 | `401 Credential was not sent` | `apiKeyHelper` 경로와 `~/.claude-databricks/.env` 권한/토큰 확인 |
 | 설정은 맞지만 다른 키로 인증됨 | 셸/프로필의 `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`를 unset한 뒤 설치기와 Claude Code 재실행 |
 | `403 ... rate limit of 0` | 일반 429 초과와 다름. 모델/리전, cross-Geo, endpoint·사용자 rate limit, 권한, 계정 용량을 README 순서대로 확인 |
-| `/ai-gateway/...`가 `404 FEATURE_DISABLED` | Unity AI Gateway (Beta, v2 API) 미활성. `/serving-endpoints/anthropic` 직접 경로 사용 |
+| `/ai-gateway/...` 호출 실패 | Account Console의 Unity AI Gateway Preview, Unity Catalog, 지원 리전, model service 권한 확인. 직접 연결은 `/serving-endpoints/anthropic` 사용 |
 | `/model`의 모델이 실패 | 해당 모델의 현재 리전 가용성과 endpoint ID 확인 |
+| `/model fable`이 실패 | `databricks-claude-fable-5`가 현재 workspace에서 검증되지 않아 family mapping을 만들지 않은 상태일 수 있음 |
 | Python Agent Framework 두 번째 턴에서 `messages.N.name` 오류 | `src/agent_sample.py`의 최소 호환 훅이 최신인지 확인 |
-| `tool type 'web_search_20250305' is not supported` | `permissions.deny`에 bare `WebSearch` 추가 또는 MCP 검색 서버 사용 |
-| `--settings custom.json`에서 401 | `apiKeyHelper`가 로드되는 기본 설정 또는 `CLAUDE_CONFIG_DIR/settings.json` 사용 |
+| `tool type 'web_search_*' is not supported` | `permissions.deny`에 bare `WebSearch` 추가 또는 MCP 검색 서버 사용 |
+| Remote Control 또는 MCP tool search가 보이지 않음 | custom `ANTHROPIC_BASE_URL`의 기본 제한. 일반 MCP 서버는 별개이며 tool search를 강제로 켜기 전 gateway의 `tool_reference` 지원 확인 |
 | 이전 포트 4000 프로세스가 남음 | 더 이상 사용되지 않는 LiteLLM 프로세스. PID를 확인한 뒤 해당 PID만 종료 |
 
 macOS에서 과거 프록시 PID 확인:
@@ -400,3 +435,9 @@ LiteLLM이 필요하지 않습니다.
 Claude Code 모델 환경변수의 최신 의미는
 [Model configuration](https://code.claude.com/docs/en/model-config#environment-variables)을
 참고하세요.
+
+추가 참고:
+
+- [Claude Code environment variables](https://code.claude.com/docs/en/env-vars)
+- [Foundation model Unity Catalog permissions](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/model-uc-permissions)
+- [Model usage for Unity AI Gateway services](https://learn.microsoft.com/azure/databricks/ai-gateway/usage-tracking)

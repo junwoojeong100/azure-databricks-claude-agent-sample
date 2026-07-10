@@ -196,7 +196,7 @@ if (-not $Models) {
         $env:DATABRICKS_MODELS
     }
     else {
-        'databricks-claude-opus-4-8 databricks-claude-sonnet-5 databricks-claude-haiku-4-5'
+        'databricks-claude-opus-4-8 databricks-claude-sonnet-5 databricks-claude-haiku-4-5 databricks-claude-fable-5'
     }
 }
 
@@ -213,6 +213,10 @@ if ($env:ANTHROPIC_AUTH_TOKEN -or $env:ANTHROPIC_API_KEY) {
 }
 $ClaudeVersion = (& claude --version 2>$null | Select-Object -First 1)
 Write-Ok "Claude Code: $ClaudeVersion"
+if ($ClaudeVersion -match '(\d+\.\d+\.\d+)' -and
+    [version]$Matches[1] -lt [version]'2.1.197') {
+    Write-Note 'Claude Code 2.1.197+ is recommended for the default Sonnet 5 mapping'
+}
 
 Write-Step '3/6 Verify native Anthropic API'
 if (-not (Test-NativeModel -Model $Endpoint)) {
@@ -337,6 +341,7 @@ Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_SMALL_FAST_MODEL'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_OPUS_MODEL'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_SONNET_MODEL'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_HAIKU_MODEL'
+Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_FABLE_MODEL'
 Set-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_BASE_URL' -Value $AnthropicBaseUrl
 Set-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_MODEL' -Value $Endpoint
 Set-JsonProperty -Object $ClaudeEnv -Name 'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS' -Value '1'
@@ -374,10 +379,12 @@ Set-JsonProperty -Object $Permissions -Name 'deny' -Value $DenyRules
 $DefaultOpus = ''
 $DefaultSonnet = ''
 $DefaultHaiku = $FastEndpoint
+$DefaultFable = ''
 foreach ($model in $ValidatedModels) {
     $model = $model.Trim()
     if (-not $DefaultOpus -and $model -like '*opus*') { $DefaultOpus = $model }
     if (-not $DefaultSonnet -and $model -like '*sonnet*') { $DefaultSonnet = $model }
+    if (-not $DefaultFable -and $model -like '*fable*') { $DefaultFable = $model }
 }
 if (-not $DefaultOpus) { $DefaultOpus = $Endpoint }
 if (-not $DefaultSonnet) { $DefaultSonnet = $Endpoint }
@@ -390,6 +397,9 @@ if ($DefaultSonnet) {
 }
 if ($DefaultHaiku) {
     Set-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_HAIKU_MODEL' -Value $DefaultHaiku
+}
+if ($DefaultFable) {
+    Set-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_FABLE_MODEL' -Value $DefaultFable
 }
 
 Set-JsonProperty -Object $Settings -Name 'apiKeyHelper' -Value $ApiKeyHelper
