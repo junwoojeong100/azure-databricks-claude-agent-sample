@@ -2,7 +2,7 @@
 #
 # End-to-end setup for the Databricks Claude agent sample.
 #
-# Automates, idempotently, from an empty subscription:
+# Automates from an empty subscription and reuses a valid repo .env PAT on reruns:
 #   1. Resource group
 #   2. Azure Databricks workspace
 #   3. Databricks PAT (via your Azure AD login) + .env
@@ -24,11 +24,26 @@ RG="${RG:-rg-databricks-claude}"
 LOCATION="${LOCATION:-eastus2}"
 WORKSPACE="${WORKSPACE:-ws-databricks-claude}"
 SKU="${SKU:-premium}"
-ENDPOINT="${ENDPOINT:-databricks-claude-opus-4-8}"          # target model
+ENDPOINT_EXPLICIT=0
+if [ -n "${ENDPOINT:-}" ] || [ -n "${DATABRICKS_SERVING_ENDPOINT:-}" ]; then
+  ENDPOINT_EXPLICIT=1
+fi
+FAST_ENDPOINT_EXPLICIT=0
+if [ -n "${DATABRICKS_FAST_ENDPOINT:-}" ]; then
+  FAST_ENDPOINT_EXPLICIT=1
+fi
+MODELS_EXPLICIT=0
+if [ -n "${DATABRICKS_MODELS:-}" ]; then
+  MODELS_EXPLICIT=1
+fi
+ENDPOINT="${ENDPOINT:-${DATABRICKS_SERVING_ENDPOINT:-databricks-claude-opus-4-8}}"  # target model
+DATABRICKS_FAST_ENDPOINT="${DATABRICKS_FAST_ENDPOINT:-}"     # optional Claude Code background model
+DATABRICKS_MODELS="${DATABRICKS_MODELS:-}"                   # optional Claude Code model aliases
 FALLBACK="${FALLBACK:-databricks-meta-llama-3-3-70b-instruct}"  # proves pipeline
 PAT_LIFETIME_SECONDS="${PAT_LIFETIME_SECONDS:-7776000}"    # 90 days
+ROTATE_PAT="${ROTATE_PAT:-0}"                              # 1 creates a new PAT
 RUN_AGENT="${RUN_AGENT:-1}"                                 # run the sample at the end
-ACCOUNT_DIAG="${ACCOUNT_DIAG:-1}"                           # read account-level settings
+ACCOUNT_DIAG="${ACCOUNT_DIAG:-1}"                           # optional databricks-sdk
 
 # Azure AD application ID for the AzureDatabricks login service (fixed value).
 DBX_AAD_RESOURCE="2ff814a6-3304-4ab8-85cb-cd0e6f879c1d"
@@ -54,9 +69,55 @@ curl_with_bearer() {
     curl --config - "$@"
 }
 
+trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf "%s" "$value"
+}
+
+load_existing_config() {
+  local line key value
+  EXISTING_HOST=""
+  EXISTING_TOKEN=""
+  EXISTING_ENDPOINT=""
+  EXISTING_FAST_ENDPOINT=""
+  EXISTING_MODELS=""
+  [ -f "$ROOT/.env" ] || return 0
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="$(trim "$line")"
+    case "$line" in ""|\#*) continue ;; esac
+    case "$line" in *=*) ;; *) continue ;; esac
+
+    key="$(trim "${line%%=*}")"
+    value="$(trim "${line#*=}")"
+    case "$value" in
+      \"*\") value="${value#\"}"; value="${value%\"}" ;;
+      \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
+
+    case "$key" in
+      DATABRICKS_HOST) EXISTING_HOST="$value" ;;
+      DATABRICKS_TOKEN) EXISTING_TOKEN="$value" ;;
+      DATABRICKS_SERVING_ENDPOINT) EXISTING_ENDPOINT="$value" ;;
+      DATABRICKS_FAST_ENDPOINT) EXISTING_FAST_ENDPOINT="$value" ;;
+      DATABRICKS_MODELS) EXISTING_MODELS="$value" ;;
+    esac
+  done < "$ROOT/.env"
+}
+
+token_validation_code() {
+  local token="$1" code
+  code="$(curl_with_bearer "$token" -sS -o /dev/null -w "%{http_code}" \
+    "$HOST/api/2.0/preview/scim/v2/Me" 2>/dev/null || true)"
+  printf "%s" "${code:-000}"
+}
+
 # ---------------------------------------------------------------------------
 log "0/6 Preflight"
 command -v az >/dev/null || die "az CLI not found. Install Azure CLI and run 'az login'."
+command -v curl >/dev/null || die "curl is required."
 az account show >/dev/null 2>&1 || die "Not logged in. Run 'az login' first."
 [ -x "$PY" ] || die "venv not found at .venv. Run: python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt"
 SUB_NAME="$(az account show --query name -o tsv)"
@@ -84,13 +145,52 @@ HOST_BARE="$(az databricks workspace show -g "$RG" -n "$WORKSPACE" --query works
 HOST="https://$HOST_BARE"
 ok "workspace URL: $HOST"
 
+load_existing_config
+EXISTING_CONFIG_MATCHES=0
+if [ "${EXISTING_HOST%/}" = "$HOST" ]; then
+  EXISTING_CONFIG_MATCHES=1
+  if [ "$ENDPOINT_EXPLICIT" = "0" ] && [ -n "$EXISTING_ENDPOINT" ]; then
+    ENDPOINT="$EXISTING_ENDPOINT"
+  fi
+  if [ "$FAST_ENDPOINT_EXPLICIT" = "0" ] && [ -n "$EXISTING_FAST_ENDPOINT" ]; then
+    DATABRICKS_FAST_ENDPOINT="$EXISTING_FAST_ENDPOINT"
+  fi
+  if [ "$MODELS_EXPLICIT" = "0" ] && [ -n "$EXISTING_MODELS" ]; then
+    DATABRICKS_MODELS="$EXISTING_MODELS"
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 log "3/6 Databricks PAT + .env"
-TOKEN="$(curl_with_bearer "$(aad_token)" -sS -X POST "$HOST/api/2.0/token/create" \
-  -H "Content-Type: application/json" \
-  -d "{\"comment\":\"agent-sample-setup\",\"lifetime_seconds\":$PAT_LIFETIME_SECONDS}" \
-  | "$PY" -c "import sys,json; print(json.load(sys.stdin).get('token_value',''))")"
-[ -n "$TOKEN" ] || die "Failed to create a PAT. Ensure token creation is enabled and you have workspace access."
+TOKEN=""
+TOKEN_ACTION="created"
+if [ "$ROTATE_PAT" != "1" ] && [ "$EXISTING_CONFIG_MATCHES" = "1" ]; then
+  if [ -n "$EXISTING_TOKEN" ]; then
+    VALIDATION_CODE="$(token_validation_code "$EXISTING_TOKEN")"
+    case "$VALIDATION_CODE" in
+      200)
+        TOKEN="$EXISTING_TOKEN"
+        TOKEN_ACTION="reused"
+        ok "reusing the valid PAT already stored in .env"
+        ;;
+      401)
+        warn "the PAT in .env is invalid or expired; creating a replacement"
+        ;;
+      *)
+        die "Could not verify the PAT in .env (HTTP $VALIDATION_CODE). Retry when the workspace is reachable; use ROTATE_PAT=1 only when you intentionally want a new token."
+        ;;
+    esac
+  fi
+fi
+
+if [ -z "$TOKEN" ]; then
+  TOKEN="$(curl_with_bearer "$(aad_token)" -sS -X POST "$HOST/api/2.0/token/create" \
+    -H "Content-Type: application/json" \
+    -d "{\"comment\":\"agent-sample-setup\",\"lifetime_seconds\":$PAT_LIFETIME_SECONDS}" \
+    | "$PY" -c "import sys,json; print(json.load(sys.stdin).get('token_value',''))")"
+  [ -n "$TOKEN" ] || die "Failed to create a PAT. Ensure token creation is enabled and you have workspace access."
+  ok "created a new PAT (ROTATE_PAT=$ROTATE_PAT)"
+fi
 OLD_UMASK="$(umask)"
 umask 077
 cat > "$ROOT/.env" <<EOF
@@ -99,13 +199,29 @@ DATABRICKS_HOST=$HOST
 
 # Databricks Model Serving 엔드포인트 이름
 DATABRICKS_SERVING_ENDPOINT=$ENDPOINT
+EOF
+if [ -n "$DATABRICKS_FAST_ENDPOINT" ]; then
+  cat >> "$ROOT/.env" <<EOF
+
+# Claude Code Haiku/background model
+DATABRICKS_FAST_ENDPOINT=$DATABRICKS_FAST_ENDPOINT
+EOF
+fi
+if [ -n "$DATABRICKS_MODELS" ]; then
+  cat >> "$ROOT/.env" <<EOF
+
+# Claude Code /model preset mappings
+DATABRICKS_MODELS="$DATABRICKS_MODELS"
+EOF
+fi
+cat >> "$ROOT/.env" <<EOF
 
 # Databricks Personal Access Token (PAT)
 DATABRICKS_TOKEN=$TOKEN
 EOF
 chmod 600 "$ROOT/.env"
 umask "$OLD_UMASK"
-ok ".env written (HOST + $ENDPOINT + PAT). PAT length: ${#TOKEN}"
+ok ".env written (HOST + $ENDPOINT + $TOKEN_ACTION PAT). PAT length: ${#TOKEN}"
 
 # ---------------------------------------------------------------------------
 if [ "$ACCOUNT_DIAG" = "1" ]; then
@@ -197,11 +313,10 @@ else
   if echo "$MSG" | grep -q "rate limit of 0"; then
     cat <<EOF
     ────────────────────────────────────────────────────────────
-    Anthropic Claude 모델이 계정 레벨에서 비활성화돼 있습니다.
-    이는 리전/워크스페이스 무관(테넌트당 Databricks 계정 1개)이며,
-    partner-powered/cross-Geo 설정으로 풀리지 않습니다. Databricks가
-    계정에 Anthropic pay-per-token 엔타이틀먼트를 켜줘야 합니다.
-    (Databricks 자체 호스팅 모델은 아래처럼 정상 동작합니다.)
+    Claude의 유효 한도가 0으로 반환됐습니다. 일반 사용량 초과(429)와 다르며,
+    모델/리전 가용성, cross-Geo 설정, endpoint·사용자 rate limit,
+    또는 계정별 용량 활성화 상태를 확인해야 합니다.
+    Databricks 자체 모델을 아래에서 호출해 인증과 API 경로를 별도로 검증합니다.
     ────────────────────────────────────────────────────────────
 EOF
   fi
@@ -232,5 +347,5 @@ ok "Done. Workspace: $HOST"
 if [ "$WORKING_ENDPOINT" = "$ENDPOINT" ]; then
   ok "Claude endpoint '$ENDPOINT' is live — run: .venv/bin/python src/agent_sample.py"
 else
-  warn "Claude '$ENDPOINT' is account-gated; the sample is wired and will work the moment Databricks enables Anthropic for your account."
+  warn "Claude '$ENDPOINT' is unavailable; review region, cross-Geo, rate limits, permissions, and account capacity."
 fi

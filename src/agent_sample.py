@@ -93,38 +93,31 @@ SAMPLE_QUESTIONS = [
 ]
 
 
-_ENABLEMENT_ERROR_HINTS = (
+_ZERO_RATE_LIMIT_ERROR_HINTS = (
     "rate limit of 0",
 )
 
 
-def _looks_like_endpoint_disabled_error(exc: BaseException) -> bool:
+def _looks_like_zero_rate_limit_error(exc: BaseException) -> bool:
     text = str(exc)
-    return any(hint in text for hint in _ENABLEMENT_ERROR_HINTS)
+    return any(hint in text for hint in _ZERO_RATE_LIMIT_ERROR_HINTS)
 
 
-def _print_endpoint_enablement_help(endpoint: str) -> None:
+def _print_zero_rate_limit_help(endpoint: str) -> None:
     # A 403 "rate limit of 0" is not normal throttling (which returns 429).
-    # It indicates that Anthropic serving capacity is unavailable for the
-    # account or region, so point the operator at the enablement path instead
-    # of dumping a stack trace.
+    # Point the operator at the documented availability and limit checks.
     print(
         "\n" + "=" * 60 + "\n"
         f"[!] '{endpoint}' 호출이 거부되었습니다 (Databricks-set rate limit of 0).\n\n"
-        "Claude는 Databricks-hosted Foundation Model이지만"
-        "(Llama와 동일한 API/과금/한도),\n"
-        "Anthropic(라이선스 파트너) 모델은 계정/지역별 서빙 용량 "
-        "할당 대상입니다. 이 계정에\n"
-        "할당이 0이라 막힌 상태로, "
-        "PAT·권한·partner-powered·cross-Geo 등 고객 설정으로는\n"
-        "바뀌지 않습니다. 해결:\n"
-        "  - Anthropic 용량이 할당된 다른 Entra 테넌트/구독에서 실행, 또는\n"
-        "  - Azure Databricks account team에 계정의 Anthropic 용량 활성화 요청.\n"
-        "  (비 EU/US 리전은 account console → Workspaces → 워크스페이스 →\n"
-        "   Security and compliance에서 cross-Geo 처리도 켜야 하지만, 위 용량이 0이면\n"
-        "   그것만으로는 열리지 않습니다.)\n\n"
-        "참고: databricks-meta-llama-3-3-70b-instruct 같은 오픈 Databricks 호스팅\n"
-        "모델은 이 할당과 무관하게 동작합니다.\n"
+        "일반적인 사용량 초과는 429를 반환합니다. 403과 유효 한도 0 조합은 다음을\n"
+        "차례로 확인해야 합니다:\n"
+        "  - 현재 workspace region에서 해당 Claude 모델이 지원되는지\n"
+        "  - 비 EU/US 리전에서 cross-Geo 처리가 필요한지\n"
+        "  - endpoint·사용자·그룹 rate limit이 0으로 설정되지 않았는지\n"
+        "  - 모델 호출 권한과 계정별 Anthropic 용량이 활성화됐는지\n\n"
+        "Databricks 자체 모델은 성공하고 Claude만 실패하면 모델별 가용성 또는 용량\n"
+        "문제일 가능성이 높습니다. 필요한 경우 Azure Databricks account team에\n"
+        "현재 account/workspace/model 정보를 전달해 확인하세요.\n"
         + "=" * 60
     )
 
@@ -189,9 +182,9 @@ async def main() -> None:
                     except asyncio.CancelledError:
                         pass
                     spinner_task = None
-                if not _looks_like_endpoint_disabled_error(exc):
+                if not _looks_like_zero_rate_limit_error(exc):
                     raise
-                _print_endpoint_enablement_help(
+                _print_zero_rate_limit_help(
                     os.environ.get("DATABRICKS_SERVING_ENDPOINT", "?")
                 )
                 return

@@ -11,9 +11,11 @@
     Claude Code can use this endpoint directly. No LiteLLM proxy, Python
     environment, local port, or auto-start service is required.
 
-    This script verifies the endpoint, stores the Databricks token in a
-    user-restricted file, configures Claude Code with an apiKeyHelper, disables
-    the legacy LiteLLM Scheduled Task if present, and runs an end-to-end test.
+    This script checks prerequisites and ambient credentials, verifies the
+    endpoint and model fallbacks, stores the Databricks token in a
+    user-restricted file, configures apiKeyHelper, model aliases, beta
+    filtering, and WebSearch deny, disables the legacy LiteLLM Scheduled Task
+    if present, and runs an end-to-end test.
 
 .EXAMPLE
     scripts\setup_claude_code_databricks.ps1
@@ -161,6 +163,26 @@ if (-not $Endpoint) {
         'databricks-claude-opus-4-8'
     }
 }
+if (-not $FastEndpoint -and -not $env:DATABRICKS_FAST_ENDPOINT -and (Test-Path $ClaudeSettings)) {
+    try {
+        $ExistingSettings = Get-Content -Raw $ClaudeSettings | ConvertFrom-Json
+    }
+    catch {
+        Stop-WithError "Invalid JSON in $ClaudeSettings`: $($_.Exception.Message)"
+    }
+    if (
+        $null -ne $ExistingSettings -and
+        $ExistingSettings.PSObject.Properties['env'] -and
+        $null -ne $ExistingSettings.env -and
+        $ExistingSettings.env.PSObject.Properties['ANTHROPIC_SMALL_FAST_MODEL']
+    ) {
+        $LegacyFastEndpoint = [string]$ExistingSettings.env.ANTHROPIC_SMALL_FAST_MODEL
+        if ($LegacyFastEndpoint) {
+            $FastEndpoint = $LegacyFastEndpoint
+            Write-Ok "migrating legacy ANTHROPIC_SMALL_FAST_MODEL='$LegacyFastEndpoint'"
+        }
+    }
+}
 if (-not $FastEndpoint) {
     $FastEndpoint = if ($env:DATABRICKS_FAST_ENDPOINT) {
         $env:DATABRICKS_FAST_ENDPOINT
@@ -180,7 +202,7 @@ if (-not $Models) {
 
 $AnthropicBaseUrl = $DbxHost.TrimEnd('/') + '/serving-endpoints/anthropic'
 Write-Ok "native Anthropic API: $AnthropicBaseUrl"
-Write-Ok "default model: $Endpoint   small/fast: $FastEndpoint"
+Write-Ok "default model: $Endpoint   Haiku/background: $FastEndpoint"
 
 Write-Step '2/6 Preflight'
 if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
@@ -201,10 +223,10 @@ Write-Ok "main model '$Endpoint' returned an Anthropic message"
 
 if ($FastEndpoint -ne $Endpoint) {
     if (Test-NativeModel -Model $FastEndpoint) {
-        Write-Ok "small/fast model '$FastEndpoint' returned an Anthropic message"
+        Write-Ok "Haiku/background model '$FastEndpoint' returned an Anthropic message"
     }
     else {
-        Write-Note "small/fast model '$FastEndpoint' failed; using '$Endpoint'"
+        Write-Note "Haiku/background model '$FastEndpoint' failed; using '$Endpoint'"
         $FastEndpoint = $Endpoint
     }
 }
@@ -311,12 +333,12 @@ else {
 
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_AUTH_TOKEN'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_API_KEY'
+Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_SMALL_FAST_MODEL'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_OPUS_MODEL'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_SONNET_MODEL'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_HAIKU_MODEL'
 Set-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_BASE_URL' -Value $AnthropicBaseUrl
 Set-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_MODEL' -Value $Endpoint
-Set-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_SMALL_FAST_MODEL' -Value $FastEndpoint
 Set-JsonProperty -Object $ClaudeEnv -Name 'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS' -Value '1'
 Set-JsonProperty -Object $ClaudeEnv -Name 'CLAUDE_CODE_API_KEY_HELPER_TTL_MS' -Value '900000'
 
@@ -351,16 +373,14 @@ Set-JsonProperty -Object $Permissions -Name 'deny' -Value $DenyRules
 
 $DefaultOpus = ''
 $DefaultSonnet = ''
-$DefaultHaiku = ''
+$DefaultHaiku = $FastEndpoint
 foreach ($model in $ValidatedModels) {
     $model = $model.Trim()
     if (-not $DefaultOpus -and $model -like '*opus*') { $DefaultOpus = $model }
     if (-not $DefaultSonnet -and $model -like '*sonnet*') { $DefaultSonnet = $model }
-    if (-not $DefaultHaiku -and $model -like '*haiku*') { $DefaultHaiku = $model }
 }
 if (-not $DefaultOpus) { $DefaultOpus = $Endpoint }
 if (-not $DefaultSonnet) { $DefaultSonnet = $Endpoint }
-if (-not $DefaultHaiku) { $DefaultHaiku = $FastEndpoint }
 
 if ($DefaultOpus) {
     Set-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_OPUS_MODEL' -Value $DefaultOpus

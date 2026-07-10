@@ -9,7 +9,7 @@ Claude Code ──(Anthropic /v1/messages)──► Azure Databricks Model Servi
                                            /serving-endpoints/anthropic
 ```
 
-> 검증 기준: Claude Code 2.1.206, `databricks-claude-opus-4-8`,
+> 최종 검증: 2026-07-10, Claude Code 2.1.206, `databricks-claude-opus-4-8`,
 > 단일/다중 턴, high effort, `stop_sequences`, 도구 호출.
 
 ---
@@ -108,12 +108,13 @@ scripts/setup_claude_code_databricks.sh
 스크립트가 수행하는 작업:
 
 1. `.env` 또는 환경변수에서 Databricks 설정 로드
-2. 네이티브 `/serving-endpoints/anthropic/v1/messages` 호출 검증
-3. Databricks 토큰을 사용자 전용 파일에 저장
-4. Claude Code `apiKeyHelper`와 모델 환경변수 설정
-5. Databricks가 지원하지 않는 Anthropic hosted `WebSearch` 도구 비활성화
-6. 이전 LiteLLM launchd/systemd/Scheduled Task가 있으면 비활성화
-7. Claude Code를 실제로 실행해 종단 간 검증
+2. `curl`·Python·Claude Code와 충돌하는 ambient credential 사전 점검
+3. 네이티브 `/serving-endpoints/anthropic/v1/messages`와 모델 fallback 검증
+4. Databricks 토큰을 사용자 전용 파일에 저장
+5. `apiKeyHelper`, 모델 프리셋, 미지원 beta 헤더 제거 설정
+6. Databricks가 지원하지 않는 Anthropic hosted `WebSearch` 도구 비활성화
+7. 이전 LiteLLM launchd/systemd/Scheduled Task가 있으면 비활성화
+8. Claude Code를 실제로 실행해 종단 간 검증
 
 설정 과정에서 Python 가상환경, LiteLLM, 로컬 포트, 백그라운드 서비스는 생성하지
 않습니다.
@@ -141,7 +142,6 @@ scripts/setup_claude_code_databricks.sh
   "env": {
     "ANTHROPIC_BASE_URL": "https://adb-xxxx.azuredatabricks.net/serving-endpoints/anthropic",
     "ANTHROPIC_MODEL": "databricks-claude-opus-4-8",
-    "ANTHROPIC_SMALL_FAST_MODEL": "databricks-claude-haiku-4-5",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "databricks-claude-opus-4-8",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "databricks-claude-sonnet-5",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "databricks-claude-haiku-4-5",
@@ -178,8 +178,10 @@ Gateway의 `ucode` 구성을 사용하세요.
 남습니다. 설치기는 `apiKeyHelper`가 권한이 제한된 별도 파일에서 토큰을 읽도록
 구성합니다.
 
-운영 환경에서는 장기 PAT보다 OAuth M2M 또는 Unity AI Gateway의 `ucode` 인증을
-권장합니다.
+운영 환경에서는 장기 PAT보다 서비스 주체 OAuth M2M을 권장합니다. 이 리포의 자동
+설정기는 PAT helper만 생성하며 M2M 토큰 갱신 helper는 구현하지 않습니다. 조직 단위
+OAuth 로그인이 필요하면 Unity AI Gateway의 `ucode`를 사용하거나, Databricks CLI/SDK가
+발급한 단기 토큰을 반환하는 별도 `apiKeyHelper`를 운영해야 합니다.
 
 > 검증한 Claude Code 2.1.206에서는 `apiKeyHelper`가 일반
 > `CLAUDE_CONFIG_DIR/settings.json`에서 정상 동작했지만, `--settings <custom.json>`만으로
@@ -195,7 +197,11 @@ Gateway의 `ucode` 구성을 사용하세요.
 - `ANTHROPIC_DEFAULT_OPUS_MODEL`
 - `ANTHROPIC_DEFAULT_SONNET_MODEL`
 - `ANTHROPIC_DEFAULT_HAIKU_MODEL`
-- `ANTHROPIC_SMALL_FAST_MODEL`
+
+`ANTHROPIC_DEFAULT_HAIKU_MODEL`은 `/model haiku`뿐 아니라 요약·분류 등 Claude Code의
+백그라운드 기능에도 사용됩니다. 이전 `ANTHROPIC_SMALL_FAST_MODEL`은 deprecated입니다.
+명시적 `DATABRICKS_FAST_ENDPOINT`가 없으면 설치기가 기존 값을 먼저 검증해
+`ANTHROPIC_DEFAULT_HAIKU_MODEL`로 이동한 뒤 deprecated key를 제거합니다.
 
 Claude Code에서 실행 중 다음 명령으로 전환합니다.
 
@@ -213,7 +219,7 @@ claude --model databricks-claude-sonnet-5
 라우팅하므로 LiteLLM의 `model_list` 등록이 필요하지 않습니다.
 
 설치기는 각 모델을 먼저 호출해 검증합니다. 특정 Opus/Sonnet/Haiku 모델이 현재 리전에서
-실패하면 해당 family 프리셋은 검증된 기본 모델로, Haiku 프리셋은 검증된 small/fast 모델로
+실패하면 해당 family 프리셋은 검증된 기본 모델로, Haiku 프리셋은 검증된 Haiku 모델로
 fallback하여 `/model`이 지원되지 않는 Anthropic 기본 ID로 빠지지 않게 합니다.
 
 ---
@@ -290,7 +296,8 @@ curl --config - -sS \
 
 ### Unity AI Gateway Beta가 활성화된 경우
 
-Databricks의 `ucode`가 OAuth 로그인, 모델 검색, Claude 설정을 자동화합니다.
+Databricks의 `ucode`가 사용자 OAuth 로그인, 모델 검색, Claude 설정을 자동화합니다.
+`ucode`는 Python 3.12 이상과 `uv`가 필요합니다.
 
 ```bash
 uv tool install git+https://github.com/databricks/ucode
@@ -317,6 +324,7 @@ https://<workspace>/ai-gateway/anthropic
 
 - Claude Code base URL을 Databricks 네이티브 Anthropic API로 변경
 - `ANTHROPIC_AUTH_TOKEN`의 기존 로컬 프록시 키 제거
+- deprecated `ANTHROPIC_SMALL_FAST_MODEL` 제거
 - launchd/systemd/Scheduled Task로 등록된 이전 프록시 비활성화
 - 기존 LiteLLM 파일은 삭제하지 않고 비활성 상태로 보존
 
@@ -362,7 +370,7 @@ Remove-Item -Force `
 | `400 invalid beta flag` | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` 확인 후 Claude Code 재시작 |
 | `401 Credential was not sent` | `apiKeyHelper` 경로와 `~/.claude-databricks/.env` 권한/토큰 확인 |
 | 설정은 맞지만 다른 키로 인증됨 | 셸/프로필의 `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`를 unset한 뒤 설치기와 Claude Code 재실행 |
-| `403 ... rate limit of 0` | Anthropic 모델 용량 또는 계정 활성화 문제. README 문제 해결 절 참고 |
+| `403 ... rate limit of 0` | 일반 429 초과와 다름. 모델/리전, cross-Geo, endpoint·사용자 rate limit, 권한, 계정 용량을 README 순서대로 확인 |
 | `/ai-gateway/...`가 `404 FEATURE_DISABLED` | Unity AI Gateway (Beta, v2 API) 미활성. `/serving-endpoints/anthropic` 직접 경로 사용 |
 | `/model`의 모델이 실패 | 해당 모델의 현재 리전 가용성과 endpoint ID 확인 |
 | Python Agent Framework 두 번째 턴에서 `messages.N.name` 오류 | `src/agent_sample.py`의 최소 호환 훅이 최신인지 확인 |
@@ -388,3 +396,7 @@ lsof -nP -iTCP:4000 -sTCP:LISTEN
 
 이 리포가 대상으로 하는 현재 Azure Databricks-hosted Claude + Claude Code 구성에는
 LiteLLM이 필요하지 않습니다.
+
+Claude Code 모델 환경변수의 최신 의미는
+[Model configuration](https://code.claude.com/docs/en/model-config#environment-variables)을
+참고하세요.
