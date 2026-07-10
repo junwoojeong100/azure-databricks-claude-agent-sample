@@ -46,6 +46,13 @@ Claude Code ──(Anthropic /v1/messages)──► Azure Databricks
 Anthropic 모델 호출이 `403 ... rate limit of 0`으로 거부되면 README의 모델/리전,
 cross-Geo, rate limit, 권한, 계정 용량 점검 순서를 확인합니다.
 
+> Fable 5의 프롬프트와 응답은 trust and safety 목적으로 30일 보존되며 자동 안전
+> 시스템과 일부 경우 사람 검토의 대상이 될 수 있습니다. 안전 조사나 법적 요구 시
+> 더 오래 보존될 수 있습니다. 설치기 기본 후보에도 Fable 5가 포함되므로
+> [공식 모델 정책](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/supported-models#anthropic-claude-fable-5)을
+> 먼저 검토하세요. 승인되지 않은 워크로드에서는 `DATABRICKS_MODELS`를 Fable을 제외한
+> 목록으로 설정하세요.
+
 ---
 
 ## 2. 필수 Claude Code 설정
@@ -64,7 +71,9 @@ cross-Geo, rate limit, 권한, 계정 용량 점검 순서를 확인합니다.
 > PAT를 `ANTHROPIC_AUTH_TOKEN`으로 `settings.json`에 직접 저장하지 않는 것을
 > 권장합니다. 자동 설정 스크립트는 0600 파일과 `apiKeyHelper`를 사용합니다.
 > 자동 설정기는 PAT helper만 생성합니다. OAuth M2M은 별도 단기 토큰 helper가 필요합니다.
-> 선택 모델 검증이 실패한 family는 검증된 기본 또는 Haiku 모델로 fallback합니다.
+> Opus/Sonnet은 검증된 같은 family 후보를 우선하고 없으면 기본 모델로 fallback합니다.
+> Haiku 검증이 실패하면 같은 기본 모델을 사용하며 `DATABRICKS_MODELS`의 다른 Haiku
+> 후보를 자동 선택하지 않습니다.
 > Fable은 다른 family로 조용히 대체하지 않으며, 검증에 실패하면 mapping을 만들지 않습니다.
 > custom `ANTHROPIC_BASE_URL`에서는 MCP tool search와 Remote Control이 기본
 > 비활성화됩니다. 일반 MCP 서버 사용과는 별개입니다.
@@ -144,7 +153,7 @@ ucode claude
 - [ ] `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`
 - [ ] `permissions.deny`에 bare `WebSearch`가 있음
 - [ ] Haiku 백그라운드 모델과 `/model` 프리셋 매핑 확인
-- [ ] Fable은 endpoint 검증이 성공한 환경에서만 매핑됨
+- [ ] Fable 사용 시 endpoint 검증과 30일 보존·사람 검토 정책 승인 완료
 - [ ] Claude Code 단일/다중 턴 검증
 - [ ] custom base URL에서 Remote Control/MCP tool search 제한을 인지함
 - [ ] 이전 LiteLLM 자동 시작 서비스 중지
