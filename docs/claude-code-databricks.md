@@ -88,6 +88,14 @@ DATABRICKS_FAST_ENDPOINT=databricks-claude-haiku-4-5
 DATABRICKS_MODELS="databricks-claude-opus-4-8 databricks-claude-sonnet-5 databricks-claude-haiku-4-5 databricks-claude-fable-5"
 ```
 
+> **Fable 5 데이터 처리 주의:** 프롬프트와 응답은 trust and safety 목적으로 30일
+> 보존되며 자동 안전 시스템으로 처리되고 일부 경우 사람 검토 대상이 될 수 있습니다.
+> 안전 조사나 법적 요구가 있으면 30일을 넘어 보존될 수 있고, Anthropic은 이 보존
+> 목적의 limited subprocessor입니다. 설치기 기본 후보에도 Fable 5가 포함되므로
+> [공식 모델 정책](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/supported-models#anthropic-claude-fable-5)을
+> 먼저 확인하세요. 승인되지 않은 워크로드에서는 `DATABRICKS_MODELS`를 Fable을 제외한
+> 모델 ID 목록으로 설정한 뒤 설치기를 실행하세요.
+
 ---
 
 ## 3. 빠른 설정
@@ -244,9 +252,12 @@ claude --model databricks-claude-sonnet-5
 네이티브 Anthropic 엔드포인트는 요청의 `model` 값을 보고 해당 Databricks 모델로
 라우팅하므로 LiteLLM의 `model_list` 등록이 필요하지 않습니다.
 
-설치기는 각 모델을 먼저 호출해 검증합니다. 특정 Opus/Sonnet/Haiku 모델이 현재 리전에서
-실패하면 해당 family 프리셋은 검증된 기본 모델로, Haiku 프리셋은 검증된 Haiku 모델로
-fallback하여 `/model`이 지원되지 않는 Anthropic 기본 ID로 빠지지 않게 합니다.
+설치기는 각 모델을 먼저 호출해 검증합니다. Opus/Sonnet 프리셋은 각 family에서 처음
+검증된 후보를 사용하고, 검증된 같은 family 후보가 없으면 검증된 기본 모델로
+fallback합니다. `DATABRICKS_FAST_ENDPOINT` 검증이 실패하면 Haiku 프리셋도 같은 기본
+모델을 사용하며, 설치기가 `DATABRICKS_MODELS`의 다른 Haiku 후보를 자동 선택하지는
+않습니다. 이 fallback은 `/model`이 지원되지 않는 Anthropic 기본 ID로 빠지지 않게
+합니다.
 Fable은 다른 family로 조용히 대체하지 않고 `databricks-claude-fable-5`가 실제
 검증됐을 때만 매핑합니다. 해당 모델이 없는 workspace에서 `/model fable`을 선택하면
 요청이 실패할 수 있습니다.
@@ -439,5 +450,6 @@ Claude Code 모델 환경변수의 최신 의미는
 추가 참고:
 
 - [Claude Code environment variables](https://code.claude.com/docs/en/env-vars)
+- [Databricks-hosted foundation models](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/supported-models)
 - [Foundation model Unity Catalog permissions](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/model-uc-permissions)
 - [Model usage for Unity AI Gateway services](https://learn.microsoft.com/azure/databricks/ai-gateway/usage-tracking)

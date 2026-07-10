@@ -266,9 +266,14 @@ Databricks agent (databricks-claude-opus-4-8) — 대화를 시작합니다.
 세션 요약 — 3턴, 총 input=8203, output=1287, total=9490 tokens
 ```
 
-> 토큰 카운트는 Databricks/Anthropic이 반환하는 `usage` 필드를 그대로 사용합니다.
-> `total`은 `input + output`이며, cache read/create token은 input token의 세부
-> breakdown이므로 합계에 다시 더하지 않습니다.
+> 이 샘플은 Databricks OpenAI 호환 API를 통해 Agent Framework가 반환한
+> `input_token_count`, `output_token_count`, `total_token_count`를 표시합니다.
+> `total_token_count`가 없을 때만 `input + output`을 사용합니다.
+>
+> 네이티브 Anthropic Messages API의 `usage` 구조는 다릅니다. `input_tokens`는
+> cache token을 제외하므로 전체 입력은
+> `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`이고,
+> 전체 token은 여기에 `output_tokens`를 더해 계산합니다.
 
 ## 5. 문제 해결 (Troubleshooting)
 
@@ -517,5 +522,6 @@ Claude Code는 OpenAI 호환 경로가 아니라 provider-native Anthropic Messa
 - [Configure AI Gateway on model serving endpoints](https://learn.microsoft.com/azure/databricks/ai-gateway/configure-ai-gateway-endpoints)
 - [System tables reference](https://learn.microsoft.com/azure/databricks/admin/system-tables/)
 - [Monitor served models using inference tables](https://learn.microsoft.com/azure/databricks/ai-gateway/inference-tables-serving-endpoints)
+- [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
 - [Databricks 호스팅 모델 vs Microsoft Foundry — 심화 비교·거버넌스·모니터링 (참고 문서)](docs/databricks-vs-foundry-models.md)
 - [Claude Code에서 Azure Databricks의 Claude 모델 사용하기 — 네이티브 API 직접 연결 가이드](docs/claude-code-databricks.md)
