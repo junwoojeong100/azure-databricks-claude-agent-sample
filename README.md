@@ -1,8 +1,11 @@
 # Azure Databricks Claude Agent Sample
 
 [Microsoft Agent Framework](https://learn.microsoft.com/agent-framework/) (Python)
-기반으로 **Azure Databricks Model Serving**에 배포된 **Anthropic Claude Opus 4.8**
+기반으로 **Azure Databricks Model Serving**에서 제공되는 **Anthropic Claude Opus 4.8**
 모델을 사용하는 최소 샘플입니다.
+
+> 최종 검증: 2026-07-10. 모델·리전 가용성, 쿼터, Preview 상태는 변경될 수 있으므로
+> 운영 배포 전 링크된 공식 문서를 다시 확인하세요.
 
 ## 이 리포로 할 수 있는 것
 
@@ -13,14 +16,19 @@
   로컬 포트, 백그라운드 프록시는 필요하지 않습니다.
   → [docs/claude-code-databricks.md](docs/claude-code-databricks.md)
 
+| 목적 | 시작 위치 |
+| --- | --- |
+| Azure 리소스 생성부터 Python Agent 실행까지 | [§0 원클릭 자동 설정](#0-원클릭-자동-설정-선택) 또는 §1~§4 |
+| 기존 Claude Code를 Databricks Claude로 전환 | [Claude Code 빠른 경로](#claude-code-빠른-경로) |
+| 운영·비용·Foundry 비교 | [심화 비교 문서](docs/databricks-vs-foundry-models.md) |
+
 Python 샘플은 Databricks의 표준 OpenAI 호환 경로
 `/serving-endpoints/chat/completions`를 사용합니다. Agent Framework가 다중 턴 이력에
 추가하는 선택적 `name` 필드만 Databricks Claude가 거부하므로, httpx 훅은 이 필드만
 제거합니다. URL 변환이나 LiteLLM은 사용하지 않습니다.
 
-> 📌 **이 README 하나로 전체 실습(설치·설정·실행·문제 해결·관리자 권한)이 완결됩니다.**
-> Databricks vs Microsoft Foundry 심화 비교와 모니터링 리소스·비용 상세는 참고용 문서
-> [docs/databricks-vs-foundry-models.md](docs/databricks-vs-foundry-models.md)에 있습니다.
+> 📌 **Python Agent 실습은 이 README의 §0~§4로 완결됩니다.** Claude Code는 별도
+> 직접 연결 가이드, 운영·비용·Foundry 비교는 심화 문서로 분리했습니다.
 
 > 💻 **[Claude Code](https://code.claude.com/)(Anthropic 터미널 코딩 CLI)의 LLM을 이 Databricks
 > Claude 엔드포인트로 설정**하려면 — 네이티브 `/serving-endpoints/anthropic` 연결,
@@ -31,7 +39,7 @@ Python 샘플은 Databricks의 표준 OpenAI 호환 경로
 > 요건·주의사항 요약(동료·고객·파트너 공유용)은
 > [docs/claude-code-databricks-checklist.md](docs/claude-code-databricks-checklist.md)를 참고하세요.
 
-## 기존 Claude Code를 Databricks Claude로 전환 (한 명령)
+## Claude Code 빠른 경로
 
 > ✅ **이미 Claude Code가 설치돼 있고 `.env`에 자신의 Databricks 접속 정보가 있다면,
 > 아래 설치기 한 번으로 전환됩니다.**
@@ -65,9 +73,11 @@ macOS/Linux 설치기는 `curl`과 Python 3도 사용합니다. Claude 모델이
 
 ### 설치기가 자동으로 하는 일
 
+- `curl`·Python·Claude Code와 충돌하는 ambient credential 사전 점검
 - 네이티브 `/serving-endpoints/anthropic/v1/messages` 호출 확인
 - 기존 `~/.claude/settings.json` 백업 후 Databricks 직접 URL과 모델 프리셋 병합
 - PAT를 설정 JSON에 넣지 않고 권한이 제한된 `apiKeyHelper` 파일에 저장
+- 미지원 Anthropic beta 헤더 제거와 hosted `WebSearch` deny 설정
 - 기존 LiteLLM launchd/systemd/Scheduled Task 중지
 - Claude Code를 실제 실행해 `DIRECT OK` 종단 간 확인
 
@@ -87,7 +97,7 @@ claude --model databricks-claude-opus-4-8 \
   -p "Reply with exactly: DIRECT OK" --output-format json
 ```
 
-더 자세한 모델 전환, Windows 결과물, OAuth 및 문제 해결은
+더 자세한 모델 전환, Windows 결과물, 인증 범위 및 문제 해결은
 [Claude Code 직접 연결 가이드](docs/claude-code-databricks.md)를 참고하세요.
 
 > 🚀 **처음이신가요?** 가장 쉬운 길은 **[§0 원클릭 스크립트](#0-원클릭-자동-설정-선택)** 입니다 —
@@ -121,10 +131,24 @@ scripts/setup_databricks_claude.sh
 # 변경 예: RG=my-rg LOCATION=koreacentral WORKSPACE=my-ws scripts/setup_databricks_claude.sh
 ```
 
+같은 workspace에서 다시 실행하면 `.env`의 PAT를 먼저 검증해 유효한 경우 재사용하고,
+기존 serving endpoint와 Claude Code model 설정도 명시적 환경변수로 덮어쓰지 않는 한
+보존합니다.
+명시적으로 새 PAT가 필요할 때만 `ROTATE_PAT=1 scripts/setup_databricks_claude.sh`를
+사용하세요. 네트워크 오류나 429/5xx로 기존 PAT를 검증하지 못하면 불필요한 토큰 생성을
+막기 위해 중단합니다.
+
+`ACCOUNT_DIAG=1`인 기본 구성은 account-level 설정을 best-effort로 조회합니다.
+이 선택 진단을 사용하려면 `.venv/bin/pip install databricks-sdk`를 추가로 실행하세요.
+SDK가 없으면 설치 과정은 실패하지 않고 진단만 건너뜁니다.
+
+`ROTATE_PAT=1`은 새 PAT를 만들지만 기존 PAT를 자동 폐기하지 않습니다. 새 토큰이 정상
+동작하는지 확인한 뒤 더 이상 사용하지 않는 PAT는 워크스페이스 설정에서 폐기하세요.
+
 스크립트는 대상 엔드포인트(`databricks-claude-opus-4-8`) 호출을 테스트하고, 만약
-`rate limit of 0`(403)으로 막히면 Anthropic이 이 테넌트/계정에 아직 엔타이틀되지 않은
-것이므로([§5 문제 해결](#5-문제-해결-troubleshooting) 참고), Databricks 자체 호스팅 모델로
-파이프라인이 정상 동작함을 대신 검증합니다.
+`rate limit of 0`(403)으로 막히면 모델/리전, cross-Geo, endpoint·사용자 rate limit,
+권한, 계정 용량을 점검하도록 안내하고 Databricks 자체 호스팅 모델로 인증과 API 경로가
+정상인지 별도로 검증합니다.
 
 > **비용 주의:** 기본 설정은 Premium Databricks 워크스페이스와 pay-per-token 모델을
 > 사용합니다. 실습이 끝난 뒤 리소스 그룹 전체가 불필요하면
@@ -132,12 +156,13 @@ scripts/setup_databricks_claude.sh
 
 ## 1. 사전 준비
 
-1. **Azure 구독 + Databricks 워크스페이스**(권장 SKU `premium`). Claude Opus 4.8 서빙
-   엔드포인트(`databricks-claude-opus-4-8`)는 워크스페이스에 **기본 배포**돼 있습니다
+1. **Azure 구독 + Databricks 워크스페이스**(권장 SKU `premium`). Claude Opus 4.8
+   pay-per-token 엔드포인트(`databricks-claude-opus-4-8`)는 워크스페이스에
+   **사전 구성**돼 있습니다
    (Serving → Endpoints에서 확인). Claude는 Llama·GPT-OSS와 같은 **Databricks-hosted
    Foundation Model**(pay-per-token)입니다.
-   - ⚠️ 단, Anthropic Claude는 **계정/지역별 서빙 용량 할당** 대상이라, 할당이 없는
-     계정(= Entra ID 테넌트)에서는 호출이 `rate limit of 0`으로 막힙니다 →
+   - ⚠️ 모델/리전 가용성, cross-Geo, endpoint rate limit 또는 계정별 용량 상태에 따라
+     호출이 `rate limit of 0`으로 거부될 수 있습니다 →
      [§5 문제 해결](#5-문제-해결-troubleshooting) 참고.
 2. **인증 정보** — 대상 엔드포인트에 **CAN QUERY** 권한이 필요합니다.
    운영 환경은 서비스 주체 **OAuth M2M**을 권장하며, 이 최소 샘플과 자동 설정은
@@ -145,7 +170,7 @@ scripts/setup_databricks_claude.sh
    [Databricks Personal Access Token](https://learn.microsoft.com/azure/databricks/dev-tools/auth/pat)을
    사용합니다. 워크스페이스 → Settings → Developer → Access tokens → Manage →
    Generate new token.
-   (`§0` 자동 스크립트는 Azure 로그인으로 PAT를 자동 발급합니다.)
+   (`§0` 자동 스크립트는 Azure 로그인으로 PAT를 발급하고 이후 유효한 `.env` PAT를 재사용합니다.)
 3. **Python 3.10 이상** (이 저장소는 3.12로 검증).
 
 ## 2. 설치
@@ -171,7 +196,7 @@ cp .env.example .env
 | 변수 | 설명 | 예시 |
 | --- | --- | --- |
 | `DATABRICKS_HOST` | 워크스페이스 URL (스킴 포함, 끝 슬래시 없음) | `https://adb-1234567890.16.azuredatabricks.net` |
-| `DATABRICKS_SERVING_ENDPOINT` | Claude Opus 4.8가 배포된 서빙 엔드포인트 이름 | `databricks-claude-opus-4-8` |
+| `DATABRICKS_SERVING_ENDPOINT` | 사용할 Databricks-hosted Claude endpoint 이름 | `databricks-claude-opus-4-8` |
 | `DATABRICKS_TOKEN` | Databricks PAT (`dapi...`) | `dapiXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` |
 
 Python 샘플은 다음 OpenAI 호환 URL에 `DATABRICKS_SERVING_ENDPOINT`를 `model`로
@@ -243,26 +268,12 @@ Databricks agent (databricks-claude-opus-4-8) — 대화를 시작합니다.
 
 ### `403 PERMISSION_DENIED: ... Databricks-set rate limit of 0` (Claude 호출 시)
 
-먼저 사실 정리: Anthropic Claude는 Azure Databricks에서 **"Databricks-hosted" Foundation
-Model**입니다(BYO 키를 쓰는 external 모델이 아님 — 릴리스 노트가 "Databricks-hosted model"로
-명시). Llama·GPT-OSS와 동일한 OpenAI 호환 Foundation Model API를 사용하며, Claude는
-`/serving-endpoints/anthropic/v1/messages` 네이티브 API도 제공합니다.
-`system.ai` 카탈로그·DBU 과금·동일한 pay-per-token 한도(**200,000 ITPM**)를 따릅니다.
-정상 한도 초과 시 반환은 **429**입니다.
+Anthropic Claude는 Azure Databricks의 Databricks-hosted Foundation Model입니다.
+OpenAI 호환 Foundation Model API와 네이티브 Anthropic Messages API를 모두 제공합니다.
+일반 사용량 초과는 보통 429이므로 이 403은 구분해서 진단해야 하지만, 메시지만으로
+원인을 account entitlement 하나로 확정할 수는 없습니다.
 
-따라서 `403 ... rate limit of 0`은 **정상 rate-limit이 아니라**, 이 계정에 대해 Databricks가
-Claude 서빙 한도를 **0으로 막아 둔 상태**입니다. 공식 리전 표는 Claude를
-*"supported based on GPU availability"* 로 표기합니다 — 즉 **Anthropic(라이선스 파트너)
-모델은 계정별 서빙 용량 활성화 대상**이라, 완전 오픈 모델(Llama 등)과 달리 활성화되지 않은
-계정에서는 이렇게 막힙니다. 같은 Entra 테넌트(= 같은 Databricks 계정)면 리전·워크스페이스를
-바꿔도 동일합니다.
-
-> **경험적 확인:** 이 값은 **새로 생성한 Databricks 계정에서 기본 0**으로 관찰됩니다 —
-> 서로 다른 테넌트 2곳(관리형 구독 + 개인 Visual Studio Enterprise 구독), koreacentral·eastus2
-> (네이티브 리전 포함)에서 **동일하게 Claude만 403, Llama 등 오픈 모델은 200**으로 재현됐습니다.
-> 즉 리전·거버넌스 문제가 아니라 **계정 단위 Anthropic 활성화** 문제입니다.
-
-**1) 계정 레벨 게이트인지 확인** — Databricks 자체 오픈 모델은 되는데 Claude만 막히면 위 상황입니다:
+먼저 Databricks 자체 오픈 모델을 호출해 인증과 공통 API 경로를 분리해서 확인합니다.
 
 ```bash
 set -a; . ./.env; set +a          # DATABRICKS_HOST / DATABRICKS_TOKEN 로드
@@ -274,21 +285,21 @@ for EP in databricks-meta-llama-3-3-70b-instruct "$DATABRICKS_SERVING_ENDPOINT";
     -H 'Content-Type: application/json' \
     -d "{\"model\":\"$EP\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":5}"
 done
-# 오픈 모델 200 + Claude 403  →  계정에 Anthropic 서빙 용량이 할당되지 않은 상태
+# 오픈 모델 200 + Claude 403 → 공통 인증/API 경로는 정상, Claude 제공 조건을 추가 점검
 ```
 
-**2) 해결** — PAT·워크스페이스 권한·partner-powered·cross-Geo 등 **고객 설정으로는 바뀌지
-않습니다**(모두 켜도 0). 공식 문서 안내대로:
+**점검 순서:**
 
-- **Anthropic 용량이 이미 할당된 Entra 테넌트/구독**에서 실행하거나,
-- **Azure Databricks account team에 문의**해 계정의 Anthropic 서빙 용량 활성화를 요청하세요
-  (새로 생성한 Databricks 계정은 Anthropic pay-per-token이 기본 비활성(0)이며, 이는 관리형·개인
-  구독 모두에서 재현됩니다).
-
-**3) 비 EU/US 리전(예: `koreacentral`) 추가 조건** — Claude는 "EU/US" 모델이라 비EU/US
-워크스페이스는 **cross-Geo 데이터 처리**도 켜져 있어야 합니다: account console → **Workspaces →
-워크스페이스 → Security and compliance → "Enforce data processing within workspace Geography
-for Designated Services" Off**. (단, 위 용량 할당과 별개 — 할당이 0이면 cross-Geo를 켜도 0입니다.)
+1. Foundation Model API의 [모델·리전 가용성](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/supported-models)을
+   확인합니다.
+2. 다른 Geography에서 처리되는 모델이라면 account console의 designated services 데이터
+   처리 설정과 조직의 cross-Geo 정책을 확인합니다.
+3. Serving → Endpoints → 해당 모델 → AI Gateway에서 endpoint·사용자·그룹 rate limit이
+   0으로 설정되지 않았는지 확인합니다.
+4. 호출 주체가 해당 endpoint를 사용할 수 있는지 `CAN QUERY` 권한을 확인합니다.
+5. 계속 재현되면 workspace URL, 모델, 리전, request ID, 발생 시각을 포함해
+   [Azure Databricks 지원](https://learn.microsoft.com/azure/databricks/resources/support)
+   또는 Databricks account team에 용량·계정 제공 상태를 문의합니다.
 
 ### 관리자 권한이 필요한 작업
 
@@ -307,48 +318,62 @@ account admin은 **Entra ID Global Administrator**가 [account console](https://
 ## 6. 운영 모니터링 (Databricks)
 
 서빙 엔드포인트에서 **Enable usage tracking**을 켜면
-`system.serving.endpoint_usage`에 토큰 사용량이 수집됩니다. 별도의 Unity AI Gateway
-Beta를 활성화한 계정은 `system.ai_gateway.usage`와 빌트인 대시보드도 사용할 수 있습니다.
+`system.serving.endpoint_usage`에 요청별 토큰 사용량이 수집되고,
+`system.serving.served_entities`에서 endpoint·모델 메타데이터를 조회할 수 있습니다.
+두 테이블은 `served_entity_id`로 조인합니다. 별도의 Unity AI Gateway Beta를 활성화한
+계정은 `system.ai_gateway.usage`와 해당 관측 UI도 사용할 수 있습니다.
 
 | 위치 | 용도 |
 | --- | --- |
 | Databricks UI → Serving → 엔드포인트 상세 페이지 | (Custom / Provisioned Throughput 엔드포인트만) 인프라 헬스 메트릭 차트 |
-| Databricks UI → Serving → AI Gateway → **Create / View Dashboard** | 토큰/요청/지연시간/사용자별 빌트인 대시보드 (account admin이 생성, 백엔드에 SQL Warehouse 사용) |
-| `system.serving.endpoint_usage` / `system.ai_gateway.usage` (AI Gateway Beta) | 사용자/엔드포인트/시간 단위 집계, 비용 분석 (usage tracking 및 해당 Preview/권한 필요) |
-| Inference Tables (엔드포인트 설정에서 활성화) | 모든 요청/응답 + 토큰을 Delta 테이블로 저장 |
+| Databricks UI → Serving → AI Gateway | usage tracking, rate limit, payload logging 등 endpoint별 기능 설정 (`CAN MANAGE` 필요) |
+| `system.serving.endpoint_usage` + `system.serving.served_entities` | 사용자/endpoint/모델/시간 단위 토큰 집계 (usage tracking 필요) |
+| `system.ai_gateway.usage` (AI Gateway Beta) | Beta model service의 사용량 집계 (Preview와 account admin 접근 필요) |
+| Inference Tables | 요청/응답 payload를 Unity Catalog Delta 테이블에 저장 |
 
 예시 SQL:
 
 ```sql
 SELECT
-  date_trunc('hour', request_time) AS hour,
-  endpoint_name,
-  SUM(input_token_count)  AS input_tokens,
-  SUM(output_token_count) AS output_tokens,
-  COUNT(*)                AS requests
-FROM system.serving.endpoint_usage
-WHERE endpoint_name = 'databricks-claude-opus-4-8'
-  AND request_time >= current_date() - INTERVAL 7 DAYS
-GROUP BY 1, 2
-ORDER BY 1 DESC;
+  date_trunc('hour', u.request_time) AS hour,
+  e.endpoint_name,
+  COALESCE(e.entity_name, e.served_entity_name) AS model_name,
+  SUM(u.input_token_count)  AS input_tokens,
+  SUM(u.output_token_count) AS output_tokens,
+  COUNT(*)                  AS requests
+FROM system.serving.endpoint_usage AS u
+JOIN system.serving.served_entities AS e
+  ON u.served_entity_id = e.served_entity_id
+WHERE u.request_time >= current_timestamp() - INTERVAL 7 DAYS
+  AND lower(COALESCE(e.entity_name, e.served_entity_name)) LIKE '%claude%'
+GROUP BY
+  date_trunc('hour', u.request_time),
+  e.endpoint_name,
+  COALESCE(e.entity_name, e.served_entity_name)
+ORDER BY hour DESC;
 ```
 
-> 모니터링을 위해 추가로 활성화/생성해야 하는 리소스(SQL Warehouse, Inference Tables,
-> 시스템 스키마)와 비용 상세는 참고 문서
+> Usage tracking 설정은 endpoint `CAN MANAGE` 권한이 필요합니다. 시스템 테이블은
+> 처음에는 account admin만 조회할 수 있습니다. 다른 사용자에게 위임하려면 account
+> admin이면서 metastore admin인 관리자가 `system` catalog의 `USE CATALOG`, 대상
+> schema의 `USE SCHEMA`와 `SELECT`를 부여해야 합니다. Inference Tables에는 Unity
+> Catalog와 serverless compute,
+> endpoint `CAN MANAGE`, 대상 카탈로그의 `USE CATALOG`, 스키마의 `USE SCHEMA`·
+> `CREATE TABLE`도 필요합니다. 추가 리소스와 비용 상세는
 > [docs/databricks-vs-foundry-models.md](docs/databricks-vs-foundry-models.md) §11 참고.
 
 ## 7. 관리자 권한 모델
 
 Databricks 운영 작업의 상당수는 **어느 관리자 역할이 있느냐**로 가능 여부가 갈립니다
-(Workspace / Account / Metastore). 참고로 이 샘플의 `rate limit of 0`은 권한 문제가
-아니라 계정 엔타이틀먼트 문제입니다 → [§5 문제 해결](#5-문제-해결-troubleshooting).
+(Workspace / Account / Metastore). `rate limit of 0`은 메시지만으로 원인을 확정하지
+말고 [§5 문제 해결](#5-문제-해결-troubleshooting)의 순서대로 점검하세요.
 
 ### 7.1 세 가지 레벨
 
 | 레벨 | 스코프 | 부여 방법 | 대표 권한 |
 | --- | --- | --- | --- |
 | **Workspace admin** | 단일 Databricks workspace | Account admin이 만든 워크스페이스에서는 생성자가 자동 부여. 아직 역할이 없다면 Azure 구독 Owner/Contributor가 워크스페이스에 로그인해 획득할 수도 있음. 이후 UI/API로 위임 | 워크스페이스 내 사용자/그룹·권한·클러스터·서빙 엔드포인트·잡 관리, PAT 발급, 노트북 권한 |
-| **Account admin** | Databricks **account** 전체 (테넌트 단위, account console = `accounts.azuredatabricks.net`) | **자동 부여되지 않음**. 최초 1회는 **Microsoft Entra ID Global Administrator**가 account console에 처음 로그인하여 부트스트랩. 이후 기존 account admin이 UI/API로 위임 | 계정 콘솔의 워크스페이스·메타스토어·시스템 테이블·Preview·계정 사용자/그룹·청구 설정 관리 |
+| **Account admin** | Databricks **account** 전체 (account console = `accounts.azuredatabricks.net`) | **자동 부여되지 않음**. 최초 1회는 **Microsoft Entra ID Global Administrator**가 account console에 처음 로그인하여 부트스트랩. 이후 기존 account admin이 UI/API로 위임 | 계정 콘솔의 워크스페이스·메타스토어·시스템 테이블·Preview·계정 사용자/그룹·청구 설정 관리 |
 | **Metastore admin** | Unity Catalog metastore 1개 (보통 region 1개) | 메타스토어 생성 시 지정 (account admin이 생성). 기본은 그 사용자/그룹이 owner | 카탈로그 생성/소유권 이전, 외부 location/storage credential 관리, 모든 카탈로그·스키마·테이블에 대한 메타데이터 권한 |
 
 > **⚠️ 흔한 오해**: Azure 구독 Owner/Contributor 또는 workspace admin이라고 해서
@@ -370,9 +395,11 @@ Microsoft Learn 공식 문서 요지:
 
 ### 7.3 Unity Catalog 상태 확인
 
-2023년 11월 9일 이후 생성된 Azure Databricks 워크스페이스는 Unity Catalog가 자동으로
-활성화됩니다. 그 이전 워크스페이스이거나 자동 활성화되지 않은 환경만 account admin이
-리전별 metastore를 만들고 워크스페이스를 할당해야 합니다.
+Databricks는 2023년 11월 9일부터 새 워크스페이스의 Unity Catalog 자동 활성화를
+점진적으로 도입했으며, 현재 Get Started 문서는 그 이후 생성된 워크스페이스가 자동
+활성화된다고 안내합니다. 다만 실제 워크스페이스에서 `system` catalog와 workspace
+catalog를 먼저 확인하고, 활성화되지 않은 경우에만 account admin이 리전별 metastore를
+만들어 워크스페이스를 할당하세요.
 
 | 항목 | 설명 |
 | --- | --- |
@@ -390,11 +417,11 @@ Microsoft Learn 공식 문서 요지:
 
 | 작업 | 필요한 최소 권한 |
 | --- | --- |
-| 엔드포인트 호출 (CAN QUERY) | 사용자/SP에 엔드포인트 권한 부여 — workspace admin이 부여 |
+| 엔드포인트 호출 (CAN QUERY) | 사용자/SP에 endpoint `CAN QUERY` 부여 |
 | PAT 발급 (이 샘플 동작용) | 본인 사용자 권한 (workspace 설정에서 PAT 허용된 경우) |
-| Inference Tables 활성화 | **Workspace admin** + Unity Catalog enabled 워크스페이스 |
-| 서빙 엔드포인트 **Enable usage tracking** | **Workspace admin** |
-| `system.serving.endpoint_usage` / `system.ai_gateway.usage` 조회 | usage tracking/Preview 활성화 및 **Account admin** 접근 필요 |
+| Inference Tables 활성화 | endpoint `CAN MANAGE` + serverless compute + Unity Catalog `USE CATALOG`·`USE SCHEMA`·`CREATE TABLE` |
+| 서빙 엔드포인트 **Enable usage tracking** | endpoint `CAN MANAGE` |
+| `system.serving.endpoint_usage` / `system.ai_gateway.usage` 조회 | account admin, 또는 `system`의 `USE CATALOG` + 대상 schema의 `USE SCHEMA`·`SELECT`를 받은 사용자. 위임 관리자는 account admin과 metastore admin을 모두 보유 |
 | AI Gateway 빌트인 대시보드 import | **Account admin** + SQL Warehouse |
 | Metastore 생성/워크스페이스 할당 | **Account admin** |
 | 신규 워크스페이스 생성 | Azure Portal/CLI: 구독 **Owner/Contributor** 또는 필요한 custom role. Account console: **Account admin** |
@@ -466,5 +493,8 @@ Claude Code는 OpenAI 호환 경로가 아니라 provider-native Anthropic Messa
 - [Microsoft Agent Framework — OpenAI-Compatible Endpoints](https://learn.microsoft.com/agent-framework/agents/providers/openai)
 - [Databricks Model Serving — OpenAI compatible APIs](https://learn.microsoft.com/azure/databricks/machine-learning/model-serving/score-foundation-models#openai-client)
 - [Foundation Model APIs limits and quotas (rate limits)](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/limits)
+- [Configure AI Gateway on model serving endpoints](https://learn.microsoft.com/azure/databricks/ai-gateway/configure-ai-gateway-endpoints)
+- [System tables reference](https://learn.microsoft.com/azure/databricks/admin/system-tables/)
+- [Monitor served models using inference tables](https://learn.microsoft.com/azure/databricks/ai-gateway/inference-tables-serving-endpoints)
 - [Databricks 호스팅 모델 vs Microsoft Foundry — 심화 비교·거버넌스·모니터링 (참고 문서)](docs/databricks-vs-foundry-models.md)
 - [Claude Code에서 Azure Databricks의 Claude 모델 사용하기 — 네이티브 API 직접 연결 가이드](docs/claude-code-databricks.md)

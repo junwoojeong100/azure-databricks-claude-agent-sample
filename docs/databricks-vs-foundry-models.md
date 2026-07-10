@@ -1,206 +1,280 @@
-# Databricks 호스팅 모델 vs Microsoft Foundry 모델 직접 사용 — Foundry Control Plane 관점
+# Databricks-hosted Claude vs Claude in Microsoft Foundry
 
-> ℹ️ **참고(심화) 문서입니다.** 설치·설정·실행·문제 해결 등 **실습은 [README](../README.md)만으로
-> 완결**됩니다. 이 문서는 Databricks 호스팅 방식과 Microsoft Foundry 직접 사용을 비교하고,
-> 모니터링 리소스·비용(§11)을 깊이 있게 다루는 배경/참고 자료입니다. 관리자 권한·부트스트랩은 [README](../README.md#7-관리자-권한-모델) §7로 이동했습니다.
+> 최종 검증: 2026-07-10. 모델 가용성, 쿼터, 가격, Preview 상태는 자주 바뀌므로
+> 배포 전 [공식 문서](#공식-참고-문서)를 다시 확인하세요.
+>
+> 이 문서는 운영 선택을 위한 심화 비교입니다. 설치·실행은 [README](../README.md),
+> Claude Code 연결은 [직접 연결 가이드](claude-code-databricks.md)를 참고하세요.
 
 ## TL;DR
 
-현재 샘플처럼 **Databricks Foundation Model API**로 Claude를 호출하면
-모델 거버넌스/네트워킹/관측이 **Databricks Control Plane**에 묶입니다. Databricks는
-OpenAI 호환 통합 API와 provider-native Anthropic Messages API를 모두 제공하므로
-별도 LiteLLM 변환 프록시는 필요하지 않습니다. **Foundry Models를 직접 쓰면** Foundry의
-RBAC, Private Link, Content Safety, Cost Management, 모델 카탈로그가
-**Foundry Control Plane** 한 곳에서 관리됩니다.
+- **Azure Databricks**는 사전 구성된 pay-per-token endpoint에서 Claude를 호출하고
+  Unity AI Gateway, Unity Catalog, Databricks 시스템 테이블로 관리합니다. OpenAI 호환
+  Chat Completions와 provider-native Anthropic Messages API를 모두 제공합니다.
+- **Microsoft Foundry**의 Claude는 `Hosted on Azure`와
+  `Hosted on Anthropic infrastructure` 중 가용한 방식을 선택하고, Anthropic Messages
+  API로 호출합니다. Anthropic이 판매자이자 모델 운영자이며, Microsoft가 Azure
+  Marketplace CCU 사용량을 Azure 청구서에 반영합니다.
+- Foundry Claude 배포에는 **Azure AI Content Safety 필터가 기본으로 붙지 않습니다.**
+  조직 정책에 필요하면 별도 안전 계층을 구성해야 합니다.
+- 선택 기준은 단순한 API 차이보다 **데이터가 이미 어디에 있는지**, **어느 control
+  plane에서 권한·네트워크·비용을 관리할지**, **어느 hosting option의 데이터 처리
+  조건이 필요한지**입니다.
 
----
+## 1. Control plane과 운영 책임
 
-## 1. Control Plane / 거버넌스 위치
-
-| 항목 | 현재 (Databricks 호스팅) | Foundry Models 직접 |
+| 항목 | Azure Databricks | Microsoft Foundry |
 | --- | --- | --- |
-| 모델 카탈로그 | Databricks Foundation Model API 카탈로그 | Foundry Model Catalog (Azure OpenAI + Anthropic + Meta + Mistral + xAI 등) |
-| 라이프사이클 관리 | Databricks workspace 단위 | Foundry Project / Hub 단위 |
-| 권한 모델 | Databricks Unity Catalog + workspace permission | **Microsoft Entra ID + Azure RBAC** |
-| 정책 적용 지점 | Databricks AI Gateway | Foundry → Azure Policy + Content Safety |
+| 모델 카탈로그 | Databricks Foundation Model APIs | Foundry model catalog |
+| Claude 운영 방식 | Databricks-hosted pay-per-token endpoint | Hosted on Azure 또는 Hosted on Anthropic infrastructure |
+| 권한 | Workspace endpoint ACL + Unity Catalog | Azure RBAC + Foundry resource/project 권한 |
+| 정책 적용 | Unity AI Gateway | Azure resource/network 정책 + 애플리케이션 안전 계층 |
+| 지원 경로 | Azure Databricks 지원 | Microsoft Support |
 
-> 핵심: 거버넌스 주체가 **Databricks 관리자**인지 **Azure/Foundry 플랫폼 팀**인지가 갈립니다.
+Foundry에서도 Claude는 Microsoft 모델이 아닙니다. 두 hosting option 모두 Anthropic이
+판매자와 운영자이며 Anthropic 약관이 적용됩니다. Microsoft는 Foundry 경험, Azure
+인프라 일부, Marketplace 구매·청구, 지원 접점을 제공합니다.
 
-## 2. 인증 (Identity)
+## 2. 인증과 최소 권한
 
-| | 현재 | Foundry 직접 |
+| 작업 | Azure Databricks | Microsoft Foundry |
 | --- | --- | --- |
-| 인증 방식 | Databricks PAT / OAuth (workspace 토큰) | **Entra ID Managed Identity / Service Principal** (`AzureCliCredential`, `DefaultAzureCredential`) |
-| 키 관리 | PAT 회전 별도 운영 | 키리스(passwordless) 가능 |
-| 감사 로그 | Databricks audit logs | Entra ID Sign-in logs + Azure Activity Log |
+| 개발용 인증 | PAT 또는 사용자 OAuth | API key 또는 Microsoft Entra ID |
+| 운영용 인증 | 서비스 주체 OAuth M2M 권장 | Managed Identity/서비스 주체 + Entra ID 권장 |
+| 추론 권한 | endpoint `CAN QUERY` | Foundry resource 범위의 `Cognitive Services User` |
+| 배포 권한 | 모델/endpoint 유형별 관리 권한 | Resource group `Contributor`/`Owner` + Marketplace 구독 권한 |
+| 역할 할당 | endpoint `CAN MANAGE` 또는 workspace admin | `Owner` 또는 `User Access Administrator` 등 역할 할당 권한 |
 
-Foundry 쪽이 Azure 표준 ID 체계에 정렬되어 **다른 Azure 리소스와 동일한 거버넌스**를 받습니다.
+Foundry에서 `Owner`나 `Contributor`만 있다고 Entra 기반 추론 권한이 생기지는 않습니다.
+호출 주체에는 별도로 `Cognitive Services User`가 필요합니다. 반대로 배포 권한과
+추론 권한은 같은 역할이 아닙니다.
 
-## 3. 네트워킹
+## 3. API와 네트워크 경로
 
-| | 현재 | Foundry 직접 |
+| 항목 | Azure Databricks | Microsoft Foundry |
 | --- | --- | --- |
-| Private endpoint | Databricks workspace의 Private Link 통해 간접 | **Foundry/Cognitive Services Private Endpoint** 직접 |
-| 데이터 경로 | Client → Databricks workspace → 모델 호스트 | Client → Foundry endpoint (직선) |
-| Egress 제어 | Databricks Network Security 정책 | Azure VNet/NSG/Firewall로 Foundry 단위 제어 |
+| OpenAI 호환 API | `/serving-endpoints/chat/completions` | Claude의 주 호출 경로가 아님 |
+| Anthropic API | `/serving-endpoints/anthropic/v1/messages` | `https://<resource>.services.ai.azure.com/anthropic/v1/messages` |
+| 권장 SDK | OpenAI SDK 또는 Anthropic 호환 클라이언트 | Anthropic SDK 또는 REST |
+| 모델 선택 | 사전 구성 endpoint 이름 | 배포 시 정한 deployment 이름 |
+| 네트워크 제어 | Databricks workspace와 serverless/model-serving 네트워크 정책 | Foundry resource의 네트워크 설정과 선택한 Claude hosting option |
 
-Foundry 직접이 **홉(hop)이 적고**, Azure 네트워크 정책과 일관성이 높습니다.
+Foundry의 `Hosted on Anthropic infrastructure`를 선택하면 Microsoft Foundry endpoint를
+사용하더라도 실제 프롬프트·출력 처리는 Anthropic 인프라에서 이루어질 수 있습니다.
+Private Endpoint나 지역 제한 요구가 있다면 모델 이름만 보지 말고 hosting option과
+해당 배포 유형의 데이터 처리 범위를 함께 검토하세요.
 
-## 4. 관측성 (Observability)
+## 4. 관측성과 안전 제어
 
-| 항목 | 현재 | Foundry 직접 |
+| 항목 | Azure Databricks | Microsoft Foundry |
 | --- | --- | --- |
-| 메트릭 | 인프라 헬스 메트릭은 엔드포인트 상세 페이지에 자동(주로 Custom/Provisioned). Pay-per-token Foundation Model API는 별도 빌트인 대시보드(AI Gateway → Create/View Dashboard) 또는 시스템 테이블(`system.ai_gateway.usage`, `system.serving.endpoint_usage`) 조회 필요 | **Azure Monitor Metrics** + Foundry Tracing (OpenTelemetry) |
-| 로그 | Databricks Inference Tables (Delta) | Diagnostic Settings → Log Analytics / Storage |
-| 분산 추적 | 별도 구성 | **Agent Framework + Foundry Tracing** 네이티브 |
-| 콘텐츠 안전 로그 | AI Gateway에서 별도 설정 | Content Safety가 Foundry에 기본 내장 |
+| 토큰·요청 메트릭 | `system.serving.endpoint_usage` + `system.serving.served_entities` | Foundry 모델 Monitoring 탭의 모델별 token/request |
+| 요청·응답 payload | Unity AI Gateway Inference Tables | 지원되는 진단 로그 또는 애플리케이션 telemetry를 별도 구성 |
+| 비용 원장 | `system.billing.usage`와 Databricks 비용 대시보드 | Azure Cost Management의 CCU + Foundry portal 모델별 상세 |
+| 애플리케이션 추적 | Databricks jobs/notebooks 또는 외부 OTEL | Application Insights/OpenTelemetry 선택 구성 |
+| 안전 필터 | Unity AI Gateway guardrail 또는 애플리케이션 계층 | Azure AI Content Safety가 배포 시 자동 적용되지 않음 |
 
-Foundry는 Azure Monitor / Application Insights와 **표준 통합**, Databricks는 자체 시스템 테이블 모델입니다.
+Foundry Claude에는 Anthropic의 자체 안전 시스템과 safeguards가 적용되지만, 이는
+Azure AI Content Safety 필터가 자동 연결된다는 뜻이 아닙니다. 차단 기준, 감사 로그,
+PII 처리 같은 조직 요구사항은 별도 inference-time 정책으로 설계하세요.
 
-## 5. 과금 (Cost)
+## 5. 과금과 비용 가시성
 
-| | 현재 | Foundry 직접 |
+| 항목 | Azure Databricks | Microsoft Foundry Claude |
 | --- | --- | --- |
-| 청구서 | Databricks 인보이스 (DBU 환산) | **Azure 인보이스** (다른 Azure 리소스와 합산) |
-| 단위 | DBU per 1M tokens | $/1K tokens (모델별) |
-| Cost Management 통합 | Azure Cost Mgmt에서 Databricks **묶음**으로 표시 | Azure Cost Mgmt에서 모델별/태그별 분해 가능 |
-| 예산/알림 | Databricks Budget Policy | Azure Budget + Action Group |
+| 추론 과금 | pay-per-token 사용량을 Databricks DBU로 청구 | token 사용량을 Claude Consumption Unit(CCU)로 변환 |
+| 청구 경로 | Azure Databricks 사용량으로 Azure 청구서에 반영 | Azure Marketplace CCU로 Microsoft Azure 청구서에 반영 |
+| 약정 | Azure Databricks 계약/약정 조건 | CCU는 MACC eligible, private offer 할인 가능 |
+| Azure Cost Management | Databricks resource/SKU 수준 집계 | Claude는 단일 CCU line으로 집계 |
+| 모델별 상세 | Databricks usage/billing system tables | Foundry portal Monitoring 탭 |
+| 선불 용량 | endpoint 유형과 Databricks 계약에 따라 다름 | CCU는 pay-as-you-go이며 prepaid CCU credit이 아님 |
 
-여러 Azure 워크로드를 운영 중이라면 Foundry가 **단일 청구/예산 거버넌스**에 더 잘 맞습니다.
+CCU는 가격 자체가 아니라 **청구 단위**입니다. 모델별 input/output token 단가와
+할인을 적용한 금액이 CCU로 변환됩니다. Azure Cost Management에는 Claude 사용량이
+단일 CCU meter로 보이므로, 모델별 token과 request 분석은 Foundry portal을 사용해야
+합니다.
 
-## 6. 모델 카탈로그 / 가용성
+현재 새 Claude 배포는 CCU로 청구되지만, CCU 전환 전에 만든 기존 배포는 기존
+per-model plan을 유지할 수 있습니다. 정확한 비교 견적은 두 플랫폼의 현재 가격표와
+계약 할인을 함께 적용해 계산하세요.
 
-| | 현재 | Foundry 직접 |
+## 6. 모델, hosting option, 배포 유형
+
+### Azure Databricks
+
+- Claude는 사전 구성된 pay-per-token Foundation Model API endpoint로 제공됩니다.
+- 실험과 일반 사용은 pay-per-token, 보장된 처리량이 필요한 지원 모델 아키텍처는
+  provisioned throughput을 검토합니다.
+- 모델·리전 가용성과 기본 ITPM/OTPM/QPH 제한은 Databricks 문서에서 확인합니다.
+
+### Microsoft Foundry
+
+- 모델에 따라 `Hosted on Azure`, `Hosted on Anthropic infrastructure`, 또는 둘 다
+  제공됩니다. 둘 다 있으면 portal의 기본 배포는 Hosted on Azure입니다.
+- 검증 시점 기준 Claude는 **Global Standard**를 사용하며, Azure-hosted
+  `claude-opus-4-8`과 `claude-sonnet-5`는 **Data Zone Standard (US)**도 지원합니다.
+- Hosted on Anthropic infrastructure는 Global Standard만 지원합니다.
+- Claude의 현재 배포 선택지를 일반 Foundry 모델의 PTU/Reservation 기능과 동일하게
+  취급하면 안 됩니다. Claude 공식 가용성 표에 표시된 deployment type만 사용하세요.
+- Global Standard Claude 배포를 만들 수 있는 Foundry project/resource 위치는 현재
+  East US 2와 Sweden Central입니다.
+
+모델 목록과 lifecycle 상태는 두 hosting option 사이에서도 다를 수 있습니다. 최신
+모델뿐 아니라 필요한 API 기능이 선택한 option에서 지원되는지도 확인하세요.
+
+## 7. 쿼터와 rate limit
+
+| 항목 | Azure Databricks | Microsoft Foundry |
 | --- | --- | --- |
-| Anthropic Claude | ✅ (Foundation Model API) | ✅ (Foundry에 Anthropic 카탈로그 추가됨) |
-| Azure OpenAI (GPT-4.1, o-시리즈 등) | ❌ | ✅ |
-| Meta Llama / Mistral / xAI / DeepSeek | ✅ 일부 | ✅ 광범위 |
-| 자체 fine-tuned 모델 | Databricks MLflow에서 배포 | Foundry Custom Model 배포 |
-| Reasoning/도구 호출 등 신규 기능 | Databricks 지원 시점 | Foundry 우선 지원 경향 |
+| 기본 범위 | workspace tier, 모델, endpoint 유형에 따라 적용 | subscription에서 모델·버전·deployment type별 공유 |
+| 지표 | ITPM, OTPM, QPH | RPM, uncached ITPM |
+| 초과 응답 | 일반적으로 429 | 일반적으로 429 |
+| 증설 | endpoint 유형 변경 또는 Databricks 지원 경로 | Foundry quota increase request |
 
-## 7. 쿼터 / 용량
+Databricks의 현재 Claude pay-per-token 표에는 기본 ITPM/OTPM/QPH가 게시되어 있지만
+플랫폼 tier와 모델에 따라 달라질 수 있습니다. `403 ... rate limit of 0`은 일반 429와
+다르며, 메시지만으로 account entitlement 문제라고 단정하지 말고
+[README의 진단 순서](../README.md#5-문제-해결-troubleshooting)를 따르세요.
 
-- **현재**: Databricks 워크스페이스 단위 throughput 제한 (Pay-per-token 또는 Provisioned Throughput).
-- **Foundry**: 구독/리전 단위 TPM/RPM 쿼터, **PTU (Provisioned Throughput Units)** 또는 Pay-as-you-go. Reservation 구매 가능.
+Foundry 쿼터는 같은 subscription의 resource와 region이 공유할 수 있습니다. Free
+Trial, Student, credit-based subscription 등은 Claude 가용성이 제한될 수 있으므로
+구독 유형도 함께 확인하세요.
 
-엔터프라이즈 SLA·예약 가격이 필요하면 Foundry PTU 모델이 일반적으로 더 풍부한 선택지를 제공합니다.
+## 8. 데이터 처리와 컴플라이언스
 
-## 8. 데이터 거버넌스 / 컴플라이언스
+### Azure Databricks
 
-| | 현재 | Foundry 직접 |
+Foundation Model APIs는 Databricks Designated Service이며 Databricks Geo를 기준으로
+customer content를 처리합니다. workspace region만으로 모든 처리 위치를 단정하지 말고
+해당 모델의 region availability와 designated services/cross-Geo 설정을 확인하세요.
+
+### Microsoft Foundry
+
+| 항목 | Hosted on Azure | Hosted on Anthropic infrastructure |
 | --- | --- | --- |
-| 학습 데이터 사용 안 함 보장 | Databricks 정책 | Foundry/Azure OpenAI 표준 정책 |
-| 데이터 거주지(region pinning) | Databricks workspace region | Foundry endpoint region (세부 선택 가능) |
-| 규정 준수 인증 | Databricks 인증 셋 | Azure 인증 셋 (FedRAMP, HIPAA, ISO 등 광범위) |
-| Customer-managed keys | Databricks managed | Azure Key Vault 통합 |
+| 처리 위치 | Azure 인프라에서 ingress, API, GPU inference 처리 | Anthropic 인프라에서 처리 |
+| 저장 위치 | 선택한 Azure geography에 data at rest 저장 | Anthropic 약관과 처리 조건 적용 |
+| 배포 범위 | Global Standard 또는 지원 모델의 Data Zone Standard | Global Standard |
+| Azure 밖 처리 | 선택한 배포 범위에 따름 | Azure 및 선택 region 밖에서 처리될 수 있음 |
 
-## 9. Agent Framework 통합 측면
+두 option 모두 Anthropic이 독립 data processor로 동작하고 Anthropic 상업 약관과
+Data Processing Addendum가 적용됩니다. Hosted on Azure도 automatic safeguard가
+예외적인 안전 위반 조사를 위해 Anthropic Trust & Safety review로 이어질 수 있으므로,
+규제 워크로드는 조직의 법무·보안 검토를 거치세요.
 
-| | 현재 | Foundry 직접 |
+## 9. 애플리케이션과 Agent 통합
+
+| 항목 | Azure Databricks | Microsoft Foundry |
 | --- | --- | --- |
-| 클라이언트 | `OpenAIChatCompletionClient` → `/serving-endpoints/chat/completions`; Claude Code → provider-native `/serving-endpoints/anthropic/v1/messages` | **`FoundryChatClient` / `FoundryAgent`** |
-| Hosted tools (code interpreter, file search, MCP) | 직접 구현 | **Foundry Agent Service에서 호스팅 제공** |
-| Thread/Session 관리 | 클라이언트가 직접 | Foundry 서버측 관리 옵션 |
-| Evaluation / Guardrails | 별도 구축 | Foundry Evaluations + Content Safety |
+| 이 리포의 Python 샘플 | `OpenAIChatCompletionClient` + OpenAI 호환 endpoint | 직접 전환 시 client/auth/base URL 변경 필요 |
+| Claude Code | 네이티브 Anthropic endpoint로 직접 연결 | Claude Messages API endpoint 지원 여부와 설정을 별도 검증 |
+| Claude API 기능 | Databricks가 노출한 Anthropic 호환 범위 | 선택한 Foundry hosting option이 지원하는 Claude API 범위 |
+| Agent 서비스 | 직접 구성 또는 Databricks agent 기능 | Foundry Agent Service를 별도 선택 가능 |
 
-양쪽 모두 공식 SDK 경로를 사용할 수 있습니다. 이 샘플의 작은 httpx 훅은 URL을 변환하는
-어댑터가 아니라, Agent Framework가 대화 이력에 추가하는 선택 필드 `name`만 제거합니다.
+Foundry Claude 자체 호출은 Anthropic SDK/REST를 사용합니다. Foundry Agent Service,
+hosted tools, evaluation은 별도 제품 계층이므로 특정 Claude deployment에서 필요한
+기능이 지원되는지 확인한 뒤 채택하세요.
 
----
+마이그레이션 시에는 client만 바꾸지 말고 다음 항목을 함께 옮겨야 합니다.
 
-## 10. 관리자 권한 — Foundry와의 대비
+1. endpoint와 deployment/model 이름
+2. PAT/OAuth와 Entra ID/API key
+3. endpoint ACL과 Azure RBAC
+4. private networking과 egress 정책
+5. safety/guardrail 정책
+6. token·비용·payload 관측 파이프라인
 
-> Databricks의 관리자 역할(Workspace / Account / Metastore)·최초 account admin
-> **부트스트랩**·필요 권한 매트릭스·**자가 진단**은 실습 문서 [README](../README.md#7-관리자-권한-모델) §7로
-> 옮겼습니다. 아래는 Foundry와의 대비 요약만 남깁니다.
+## 10. 관리자 역할 비교
 
-| | Databricks | Foundry |
+| 작업 | Azure Databricks | Microsoft Foundry |
 | --- | --- | --- |
-| 관리자 레이어 | Account / Workspace 역할 + 선택적 Metastore admin | Azure RBAC + Foundry 프로젝트·데이터 평면 역할 |
-| 부트스트랩 사람 | Entra ID Global Administrator (최초 1회) | Azure 구독 Owner/관리자 (자연 발생) |
-| 데이터 거버넌스 자원 | Unity Catalog (2023-11-09 이후 생성 워크스페이스는 자동 활성화, 기존 환경은 metastore 할당 필요) | Storage/Resource RBAC + Foundry Project 권한 |
-| 시스템 사용량 데이터 접근 | Unity Catalog + 기능별 usage tracking/Preview + account-level 권한 | Azure Monitor / Cost Management / Diagnostic logs의 각 RBAC 권한 |
+| 모델 호출 권한 부여 | endpoint `CAN MANAGE` 보유자 또는 workspace admin | Azure role assignment 권한 보유자 |
+| 모델 호출 | endpoint `CAN QUERY` | `Cognitive Services User` |
+| endpoint/AI Gateway 설정 | endpoint `CAN MANAGE` | Foundry resource/project 관리 역할 |
+| Marketplace 구독·배포 | 해당 없음 | Marketplace 구매 권한 + resource group `Contributor`/`Owner` |
+| 시스템 사용량 조회 | account admin이 기본 접근. 위임은 account admin + metastore admin이 Unity Catalog grant 수행 | Foundry Monitoring, Cost Management, Monitor별 RBAC |
+| 데이터 거버넌스 | Unity Catalog + account/workspace 역할 | Azure RBAC + resource/project 권한 |
 
-> Databricks는 account/workspace/Unity Catalog 역할을 구분하므로 초기 권한 설계가 더
-> 세분화됩니다. 대신 Lakehouse 데이터와 모델 사용량을 같은 카탈로그에서 통합 분석할 수 있습니다.
+Databricks는 Account, Workspace, Unity Catalog 역할이 분리됩니다. Foundry는 Azure
+RBAC가 중심이지만, 배포 권한, Marketplace 구매 권한, inference data-plane 권한,
+Cost Management 권한이 각각 다르므로 `Contributor` 하나로 모든 작업이 되지는
+않습니다.
 
----
+## 11. 모니터링 리소스와 추가 비용
 
-## 11. 모니터링/관측을 위해 추가로 프로비저닝해야 하는 리소스와 비용
+모델 token 비용과 별도로 관측 데이터를 저장·조회하는 리소스에도 비용이 생길 수
+있습니다. 아래 표는 가격을 고정값으로 가정하지 않고 비용 발생 지점만 정리합니다.
 
-위의 "관측성" 섹션은 **어떤 도구로 보는가**를 다뤘다면, 여기서는 **그 도구를 쓰기 위해 별도로 활성화/생성해야 하는 리소스**와 그에 따른 **추가 비용**을 정리합니다. 모델 호출 비용(토큰 과금)은 양쪽 모두 별도이며 여기에는 포함하지 않습니다.
+### 11.1 Azure Databricks
 
-### 11.1 현재 (Databricks Foundation Model API)
-
-| 용도 | 추가로 필요한 리소스 | 활성화 위치 | 비용 모델 | 실무 체감 비용 |
-| --- | --- | --- | --- | --- |
-| 엔드포인트 요청/토큰 대시보드 | **AI Gateway 기본 제공 대시보드** (SQL Warehouse 필요) | Serving → 엔드포인트 상세 → **View metrics** / **Create dashboard** (account admin 권한) | 대시보드 자체는 무료, 단 **SQL Warehouse DBU** 과금 | Warehouse 기동 시간에 비례 |
-| 엔드포인트 인프라 헬스 차트 (QPS/지연/오류) | 없음 — Pay-per-token Foundation Model API 엔드포인트는 상세 페이지에 인프라 메트릭 차트를 표시하지 않음 (Custom / Provisioned Throughput에서만 제공) | — | — | 0 |
-| Inference Tables (요청/응답 + 토큰 Delta 저장) | **Unity Catalog 스토리지 (ADLS Gen2)** | 엔드포인트 → AI Gateway → Inference tables 활성화 | ADLS 저장 용량 + 트랜잭션 | 보통 GB당 $0.02/월 수준, 호출량 비례 |
-| 시스템 테이블 조회 (`system.serving.endpoint_usage` 등) | **SQL Warehouse** (Serverless 권장) 또는 **All-Purpose Cluster** + usage tracking/account-level 접근 | SQL → Warehouses | 선택한 compute의 DBU/클라우드 비용 | **쿼리할 때만 과금**되지만 auto-stop이 없으면 누적 ↑ |
-| 비용 대시보드 (사용자별/엔드포인트별) | SQL Warehouse + Databricks SQL 대시보드 | SQL → Dashboards | 위와 동일 + 스케줄 새로고침 시 재기동 | 새로고침 빈도가 곧 비용 |
-| 외부 모니터링 도구 연계 (Datadog 등) | 외부 도구 라이선스 + Inference Tables 또는 system 테이블에 ETL | 외부 SaaS | 외부 도구 비용 + 데이터 전송 | 도구별 상이 |
-| 알림/이상 탐지 | Databricks **Lakehouse Monitoring** 또는 Job + Notebook 스케줄 | Quality → Monitors | DBU (Serverless Job) | 모니터당 수십 분/일 → 월 단위 적은 비용 |
-
-> **저비용 출발점**: Pay-per-token Foundation Model API는 엔드포인트 상세 페이지에 요청/토큰 차트가 기본 표시되지 않습니다. 가벼운 수준이면 Inference Tables(Storage만 과금)로 로그만 남기고, 시각화가 필요해진 시점에 AI Gateway 대시보드(SQL Warehouse 필요)를 추가하세요.
-
-### 11.2 Foundry Models 직접
-
-| 용도 | 추가로 필요한 리소스 | 활성화 위치 | 비용 모델 | 실무 체감 비용 |
-| --- | --- | --- | --- | --- |
-| 기본 메트릭 (요청 수, 토큰, 지연시간) | 없음 — Azure Monitor가 플랫폼 메트릭으로 자동 수집 | Foundry/Cognitive Services 리소스 → Metrics | 기본 플랫폼 메트릭 정책 적용 | 별도 로그 수집보다 낮음 |
-| 상세 로그 (요청/응답, 콘텐츠 안전, 사용량) | **Diagnostic Settings** + 다음 중 1개 이상의 sink<br>– **Log Analytics Workspace**<br>– Storage Account (장기 보관)<br>– Event Hubs (실시간 스트리밍) | 리소스 → Diagnostic settings | 수집량·보존 기간·리전별 가격 | 호출량·페이로드 크기 비례 |
-| KQL 쿼리/대시보드 | Log Analytics Workspace (위와 동일) + 선택적 **Azure Workbook**(무료) / **Grafana**(별도) | Azure Portal → Logs / Workbooks | 쿼리 자체는 무료, Premium 보존만 별도 | Workbook은 0, Managed Grafana는 인스턴스 시간 과금 |
-| App/Agent 분산 추적 (OpenTelemetry) | **Application Insights** (Log Analytics 기반) | 코드에 OTEL exporter 설정 | 텔레메트리 수집·보존량 기준 | 추적 샘플링으로 조절 |
-| 콘텐츠 안전 (모더레이션) 로그 | 모델/배포에서 Content Safety를 구성하고 Diagnostic logs로 수집 | Foundry → Safety + Diagnostic logs | 선택한 안전 기능과 사용량 기준 | 사용량 비례 |
-| 알림 | **Azure Monitor Alerts** (메트릭/로그 알림) + **Action Group** | Monitor → Alerts | 규칙 유형·수와 알림 채널별 가격 | 규칙 수 비례 |
-| 비용 분석 | **Azure Cost Management** (기본 무료), **Budgets**, Cost alerts | Cost Management + Billing | 무료 | 0 |
-| (옵션) 단일 SIEM | **Microsoft Sentinel** = Log Analytics 위 + Sentinel 분석 비용 | Sentinel 활성화 | 선택한 약정/수집량 기준 | 보안 통합 시만 고려 |
-
-> **저비용 출발점**: Azure Portal의 리소스 **Metrics** 블레이드 + Cost Management + Action Group (이메일) 만으로 시작 → 페이로드 감사가 필요해지면 Log Analytics를 붙이고 **샘플링/보존기간**으로 비용 통제. Application Insights는 OTEL 트레이스가 실제로 필요한 시점에 추가.
-
-### 11.3 비교 요약
-
-| 비용 항목 | 현재 (Databricks) | Foundry 직접 |
+| 목적 | 필요한 기능/리소스 | 비용 지점 |
 | --- | --- | --- |
-| **공짜로 보이는 것** | (엔드포인트 상세 페이지에 요청/토큰 차트 없음) | Azure Monitor 플랫폼 메트릭, Cost Management |
-| **활성화하는 순간 비용** | SQL Warehouse (DBU/시간) | Log Analytics 수집/보관 (GB당) |
-| **사용량에 비례** | Inference Tables 저장 (GB) | Diagnostic Logs 수집 (GB) |
-| **고정비 위험** | 자동 stop 안 한 SQL Warehouse | 보관기간 길게 잡힌 Log Analytics |
-| **세분화된 청구 분해** | DBU 한 줄로 합산 → SKU별 분해 필요 | Cost Management에서 모델/태그/리소스별 분해 즉시 가능 |
-| **통합 가능 범위** | Databricks 생태계 내 통합이 1급 | 모든 Azure 리소스(앱, DB, 네트워크 등)와 동일 도구로 통합 |
+| token/request 집계 | endpoint **Enable usage tracking** + `system.serving.*` | 시스템 테이블 자체보다 조회에 사용하는 SQL/compute 비용 |
+| endpoint/model 메타데이터 | `system.serving.served_entities` | 위와 동일 |
+| payload 감사 | Inference Tables + Unity Catalog + serverless compute | Delta storage와 조회/처리 compute |
+| 비용 귀속 | `system.billing.usage`, custom tags, 비용 dashboard | dashboard를 실행하는 SQL Warehouse/compute |
+| 알림·이상 탐지 | SQL alert, job, Lakehouse Monitoring 또는 외부 도구 | 실행 compute와 외부 서비스 비용 |
 
-### 11.4 비용 통제 체크리스트
+Inference Tables를 활성화하려면 endpoint `CAN MANAGE`, serverless compute, Unity
+Catalog, 대상 catalog의 `USE CATALOG`, schema의 `USE SCHEMA`와 `CREATE TABLE`이
+필요합니다. 테이블 스키마·이름을 임의로 바꾸거나 삭제하면 logging이 중단될 수
+있습니다.
 
-- **Databricks 측**
-  - SQL Warehouse는 **Serverless + Auto-stop 5~10분**으로 설정.
-  - Inference Tables는 필요 엔드포인트에만 켜고, **Delta TTL/VACUUM**으로 오래된 파티션 정리.
-  - 시스템 테이블 쿼리는 스케줄 잡으로 **요약 테이블**을 미리 만들어 두고 대시보드는 요약을 조회.
-- **Foundry 측**
-  - Diagnostic Settings에서 **꼭 필요한 카테고리만** Log Analytics로 보내고 나머지는 Storage (cool/archive)로 분리.
-  - Log Analytics는 **Daily Cap** 설정과 **Basic Logs / Auxiliary Logs** 티어 활용.
-  - Application Insights는 **Adaptive sampling** 또는 **고정 샘플링** 적용.
-  - **Azure Budgets**로 월 한도 + Action Group 알림.
-  - Sentinel은 정말 SOC가 받을 때만 — 그 외에는 Workbook 대시보드로 충분.
+`system.serving.endpoint_usage`에는 `endpoint_name`이 없으므로
+`served_entity_id`로 `system.serving.served_entities`를 조인해야 합니다. README의
+[예시 SQL](../README.md#6-운영-모니터링-databricks)을 기준으로 사용하세요.
+다른 사용자에게 조회를 위임하려면 account admin과 metastore admin을 모두 보유한
+관리자가 `system` catalog와 대상 schema의 `USE`·`SELECT` 권한을 부여해야 합니다.
 
----
+### 11.2 Microsoft Foundry
+
+| 목적 | 필요한 기능/리소스 | 비용 지점 |
+| --- | --- | --- |
+| 모델별 token/request | Foundry portal Monitoring | 별도 관측 저장소 없이 portal에서 확인 |
+| 청구 확인 | Azure Cost Management | Claude는 단일 CCU line으로 집계 |
+| 애플리케이션 trace | Application Insights/OpenTelemetry | telemetry ingestion·retention |
+| 장기 로그 분석 | 지원되는 Diagnostic Settings + Log Analytics/Storage/Event Hubs | 수집량, 보존 기간, sink 비용 |
+| 알림 | Azure Monitor alert + Action Group | 규칙 유형과 알림 채널별 비용 |
+| 추가 안전 필터 | Azure AI Content Safety 또는 자체 policy layer | 선택한 서비스의 사용량 |
+
+Diagnostic Settings의 category와 payload 제공 범위는 Foundry resource와 모델에 따라
+다를 수 있습니다. 요청/응답 원문이 항상 자동 수집된다고 가정하지 말고 배포 후
+지원 category를 확인하세요.
+
+### 11.3 비용 통제 체크리스트
+
+- Databricks SQL Warehouse는 auto-stop을 짧게 설정하고 dashboard refresh 주기를
+  필요한 수준으로 제한합니다.
+- Inference Tables에는 민감정보 보존 정책과 삭제 주기를 적용합니다.
+- Foundry에서는 CCU 재무 원장과 portal의 모델별 token 상세를 함께 봅니다.
+- Log Analytics와 Application Insights는 필요한 category만 수집하고 sampling과
+  retention으로 비용을 제한합니다.
+- 두 플랫폼 모두 budget/alert만 믿지 말고 endpoint 또는 사용자별 rate limit도
+  함께 설정합니다.
 
 ## 언제 어느 쪽이 맞나
 
-**현재 방식(Databricks 호스팅)이 적합한 경우**
-- 이미 Databricks가 데이터 플랫폼 표준이고, 모델 호출도 같은 보안/네트워크 경계에서 처리하고 싶을 때
-- Lakehouse 데이터와 inference 결과를 같은 Delta로 보관·분석할 때 (Inference Tables)
-- 엔지니어링·데이터 팀이 모두 Databricks 사용자일 때
+**Azure Databricks가 적합한 경우**
 
-**Foundry Models 직접이 적합한 경우**
-- 거버넌스/네트워킹/비용 관리를 **Azure 표준 도구**로 일원화하고 싶을 때
-- Azure OpenAI 모델(GPT-4.1, o-시리즈 등)을 같은 카탈로그에서 함께 쓰고 싶을 때
-- Agent Framework의 Hosted Tools / Foundry Agent Service / Evaluations를 적극 활용할 때
-- Entra ID 기반 키리스 인증, Private Endpoint, Content Safety가 컴플라이언스 요건일 때
+- Lakehouse 데이터와 inference 결과를 같은 Unity Catalog 경계에서 관리해야 할 때
+- 데이터·ML 운영팀이 Databricks 권한과 AI Gateway를 표준으로 사용할 때
+- OpenAI 호환 API와 Anthropic Messages API를 같은 workspace에서 함께 사용해야 할 때
 
-## 마이그레이션 관점 한 줄
+**Microsoft Foundry가 적합한 경우**
 
-> **Databricks → Foundry 전환은 단순한 클라이언트 교체만으로 끝나지 않습니다.**
-> 모델 ID와 인증, endpoint URL, 권한, 네트워크, 관측·비용 대시보드를 함께 옮겨야 합니다.
-> 전환 후에는 거버넌스·관측·청구가 Foundry Control Plane으로 통합되고, Databricks에
-> 남기면 데이터 플랫폼과 모델 플랫폼을 같은 경계에서 운영할 수 있습니다.
+- Entra ID, Azure RBAC, Marketplace, Cost Management를 AI 플랫폼 표준으로 사용할 때
+- Hosted on Azure 또는 Data Zone Standard의 데이터 처리 조건이 필요할 때
+- Claude와 다른 Foundry catalog 모델을 같은 Azure resource 운영 체계에서 관리할 때
+
+## 공식 참고 문서
+
+- [Claude models in Microsoft Foundry](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/claude-models)
+- [Compare hosting options for Claude models](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/claude-models-hosting-comparison)
+- [Claude Consumption Units billing](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/claude-models-billing)
+- [Data, privacy, and security for Claude models](https://learn.microsoft.com/azure/foundry/responsible-ai/claude-models/data-privacy)
+- [Deploy and use Claude models](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-claude)
+- [Configure keyless authentication for Foundry Models](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/configure-entra-id)
+- [Databricks Foundation Model APIs](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/)
+- [Databricks Foundation Model API limits](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/limits)
+- [Configure AI Gateway on model serving endpoints](https://learn.microsoft.com/azure/databricks/ai-gateway/configure-ai-gateway-endpoints)
+- [Monitor served models with inference tables](https://learn.microsoft.com/azure/databricks/ai-gateway/inference-tables-serving-endpoints)

@@ -9,11 +9,12 @@
 #
 # The script:
 #   1. Loads Databricks credentials from .env or the environment.
-#   2. Verifies the native Anthropic endpoint.
-#   3. Stores the Databricks token in a 0600 file outside Claude settings.
-#   4. Configures Claude Code with an apiKeyHelper and model aliases.
-#   5. Disables the legacy LiteLLM auto-start service if present.
-#   6. Runs a Claude Code end-to-end test.
+#   2. Checks curl, Python, Claude Code, and conflicting ambient credentials.
+#   3. Verifies the native Anthropic endpoint and selectable model fallbacks.
+#   4. Stores the Databricks token in a 0600 file outside Claude settings.
+#   5. Configures apiKeyHelper, model aliases, beta filtering, and WebSearch deny.
+#   6. Disables the legacy LiteLLM auto-start service if present.
+#   7. Runs a Claude Code end-to-end test.
 #
 # Usage:
 #   scripts/setup_claude_code_databricks.sh
@@ -29,7 +30,7 @@
 #   CLAUDE_SETTINGS           Claude Code settings path
 #                             (default: ~/.claude/settings.json)
 #   ENV_FILE                  Credential source (default: repo .env)
-#   DATABRICKS_FAST_ENDPOINT  Claude Code small/fast model
+#   DATABRICKS_FAST_ENDPOINT  Claude Code Haiku/background model
 #   DATABRICKS_MODELS         Models used to map /model family presets
 #   LEGACY_LAUNCHD_LABEL      Previous LiteLLM launchd label
 
@@ -153,13 +154,9 @@ load_env_file
 : "${DATABRICKS_TOKEN:?DATABRICKS_TOKEN is required (in .env or the environment)}"
 
 ENDPOINT="${DATABRICKS_SERVING_ENDPOINT:-databricks-claude-opus-4-8}"
-FAST_ENDPOINT="${DATABRICKS_FAST_ENDPOINT:-databricks-claude-haiku-4-5}"
 MODELS="${DATABRICKS_MODELS:-databricks-claude-opus-4-8 databricks-claude-sonnet-5 databricks-claude-haiku-4-5}"
 MODELS="${MODELS//,/ }"
 ANTHROPIC_BASE_URL="${DATABRICKS_HOST%/}/serving-endpoints/anthropic"
-
-ok "native Anthropic API: $ANTHROPIC_BASE_URL"
-ok "default model: $ENDPOINT   small/fast: $FAST_ENDPOINT"
 
 log "2/6 Preflight"
 command -v curl >/dev/null 2>&1 || die "curl is required"
@@ -175,6 +172,40 @@ elif command -v python >/dev/null 2>&1; then
 else
   die "Python is required to merge Claude Code settings safely"
 fi
+
+if [ -z "${DATABRICKS_FAST_ENDPOINT:-}" ] && [ -f "$CLAUDE_SETTINGS" ]; then
+  LEGACY_FAST_ENDPOINT="$("$PYTHON" - "$CLAUDE_SETTINGS" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"Invalid JSON in {path}: {exc}") from exc
+
+if not isinstance(data, dict):
+    raise SystemExit(f"{path} must contain a JSON object")
+env = data.get("env")
+if env is None:
+    env = {}
+elif not isinstance(env, dict):
+    raise SystemExit(f"{path}: 'env' must be a JSON object")
+value = env.get("ANTHROPIC_SMALL_FAST_MODEL")
+if isinstance(value, str):
+    print(value)
+PY
+)"
+  if [ -n "$LEGACY_FAST_ENDPOINT" ]; then
+    DATABRICKS_FAST_ENDPOINT="$LEGACY_FAST_ENDPOINT"
+    ok "migrating legacy ANTHROPIC_SMALL_FAST_MODEL='$LEGACY_FAST_ENDPOINT'"
+  fi
+fi
+
+FAST_ENDPOINT="${DATABRICKS_FAST_ENDPOINT:-databricks-claude-haiku-4-5}"
+ok "native Anthropic API: $ANTHROPIC_BASE_URL"
+ok "default model: $ENDPOINT   Haiku/background: $FAST_ENDPOINT"
 ok "Claude Code: $(claude --version 2>/dev/null | head -1)"
 
 log "3/6 Verify native Anthropic API"
@@ -187,9 +218,9 @@ fi
 
 if [ "$FAST_ENDPOINT" != "$ENDPOINT" ]; then
   if native_request "$FAST_ENDPOINT"; then
-    ok "small/fast model '$FAST_ENDPOINT' returned an Anthropic message"
+    ok "Haiku/background model '$FAST_ENDPOINT' returned an Anthropic message"
   else
-    warn "small/fast model '$FAST_ENDPOINT' failed (HTTP $NATIVE_HTTP_CODE); using '$ENDPOINT'"
+    warn "Haiku/background model '$FAST_ENDPOINT' failed (HTTP $NATIVE_HTTP_CODE); using '$ENDPOINT'"
     FAST_ENDPOINT="$ENDPOINT"
   fi
 fi
@@ -243,17 +274,15 @@ if [ -f "$CLAUDE_SETTINGS" ]; then
   ok "backed up existing Claude settings"
 fi
 
-DEFAULT_OPUS=""; DEFAULT_SONNET=""; DEFAULT_HAIKU=""
+DEFAULT_OPUS=""; DEFAULT_SONNET=""; DEFAULT_HAIKU="$FAST_ENDPOINT"
 for model in $VALID_MODELS; do
   case "$model" in
     *opus*)   [ -n "$DEFAULT_OPUS" ]   || DEFAULT_OPUS="$model" ;;
     *sonnet*) [ -n "$DEFAULT_SONNET" ] || DEFAULT_SONNET="$model" ;;
-    *haiku*)  [ -n "$DEFAULT_HAIKU" ]  || DEFAULT_HAIKU="$model" ;;
   esac
 done
 [ -n "$DEFAULT_OPUS" ] || DEFAULT_OPUS="$ENDPOINT"
 [ -n "$DEFAULT_SONNET" ] || DEFAULT_SONNET="$ENDPOINT"
-[ -n "$DEFAULT_HAIKU" ] || DEFAULT_HAIKU="$FAST_ENDPOINT"
 
 CLAUDE_SETTINGS="$CLAUDE_SETTINGS" \
 TOKEN_HELPER="$STATE_DIR/get-token.sh" \
@@ -289,6 +318,7 @@ elif not isinstance(env, dict):
 
 env.pop("ANTHROPIC_AUTH_TOKEN", None)
 env.pop("ANTHROPIC_API_KEY", None)
+env.pop("ANTHROPIC_SMALL_FAST_MODEL", None)
 env.pop("ANTHROPIC_DEFAULT_OPUS_MODEL", None)
 env.pop("ANTHROPIC_DEFAULT_SONNET_MODEL", None)
 env.pop("ANTHROPIC_DEFAULT_HAIKU_MODEL", None)
@@ -296,7 +326,6 @@ env.update(
     {
         "ANTHROPIC_BASE_URL": os.environ["ANTHROPIC_BASE_URL"],
         "ANTHROPIC_MODEL": os.environ["ENDPOINT"],
-        "ANTHROPIC_SMALL_FAST_MODEL": os.environ["FAST_ENDPOINT"],
         "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
         "CLAUDE_CODE_API_KEY_HELPER_TTL_MS": "900000",
     }
