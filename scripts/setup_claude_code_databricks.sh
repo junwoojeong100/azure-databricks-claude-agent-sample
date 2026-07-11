@@ -325,6 +325,7 @@ elif not isinstance(env, dict):
 env.pop("ANTHROPIC_AUTH_TOKEN", None)
 env.pop("ANTHROPIC_API_KEY", None)
 env.pop("ANTHROPIC_SMALL_FAST_MODEL", None)
+env.pop("ANTHROPIC_MODEL", None)
 env.pop("ANTHROPIC_DEFAULT_OPUS_MODEL", None)
 env.pop("ANTHROPIC_DEFAULT_SONNET_MODEL", None)
 env.pop("ANTHROPIC_DEFAULT_HAIKU_MODEL", None)
@@ -332,7 +333,6 @@ env.pop("ANTHROPIC_DEFAULT_FABLE_MODEL", None)
 env.update(
     {
         "ANTHROPIC_BASE_URL": os.environ["ANTHROPIC_BASE_URL"],
-        "ANTHROPIC_MODEL": os.environ["ENDPOINT"],
         "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
         "CLAUDE_CODE_API_KEY_HELPER_TTL_MS": "900000",
     }
