@@ -307,7 +307,7 @@ tool search를 기본 비활성화하고 Remote Control도 비활성화합니다
 임의로 켜지 마세요. 일반 MCP 서버와 로컬 도구 호출은 이 제한과 별개입니다.
 
 `--settings <custom.json>`은 기존 settings와 병합되며 `apiKeyHelper`도 사용할 수
-있습니다. Claude Code 2.1.206에서 custom settings 파일과 helper 조합을 직접
+있습니다. Claude Code 2.1.207에서 custom settings 파일과 helper 조합을 직접
 검증했습니다. 완전히 격리된 검증이 필요할 때만 `CLAUDE_CONFIG_DIR`을 별도 디렉터리로
 지정하세요.
 
