@@ -64,8 +64,7 @@ cross-Geo, rate limit, 권한, 계정 용량 점검 순서를 확인합니다.
 | --- | --- |
 | `ANTHROPIC_BASE_URL` | `https://<workspace>/serving-endpoints/anthropic` |
 | `apiKeyHelper` | 보호된 파일 또는 OAuth helper에서 Databricks 토큰 반환 |
-| `ANTHROPIC_MODEL` | 기본 Claude 모델 |
-| `ANTHROPIC_DEFAULT_OPUS_MODEL` / `ANTHROPIC_DEFAULT_SONNET_MODEL` | `/model`의 Opus/Sonnet 프리셋 매핑 |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` / `ANTHROPIC_DEFAULT_SONNET_MODEL` | `/model`의 Opus/Sonnet 프리셋 매핑; 기본 대화는 Opus 프리셋으로 라우팅 |
 | `ANTHROPIC_DEFAULT_HAIKU_MODEL` | Haiku 프리셋과 세션 제목 생성 등 경량 백그라운드 모델 |
 | `ANTHROPIC_DEFAULT_FABLE_MODEL` | Fable endpoint가 실제 검증된 경우에만 설정 |
 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | `1`; 미지원 beta 헤더와 beta 도구 스키마 필드 제거 |

@@ -343,12 +343,12 @@ else {
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_AUTH_TOKEN'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_API_KEY'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_SMALL_FAST_MODEL'
+Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_MODEL'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_OPUS_MODEL'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_SONNET_MODEL'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_HAIKU_MODEL'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_FABLE_MODEL'
 Set-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_BASE_URL' -Value $AnthropicBaseUrl
-Set-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_MODEL' -Value $Endpoint
 Set-JsonProperty -Object $ClaudeEnv -Name 'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS' -Value '1'
 Set-JsonProperty -Object $ClaudeEnv -Name 'CLAUDE_CODE_API_KEY_HELPER_TTL_MS' -Value '900000'
 

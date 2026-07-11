@@ -156,8 +156,7 @@ scripts/setup_claude_code_databricks.sh
 ```bash
 export ANTHROPIC_BASE_URL="https://<workspace>.azuredatabricks.net/serving-endpoints/anthropic"
 export ANTHROPIC_AUTH_TOKEN="<databricks-token>"
-export ANTHROPIC_MODEL="databricks-claude-opus-4-8"
-export ANTHROPIC_DEFAULT_OPUS_MODEL="$ANTHROPIC_MODEL"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="databricks-claude-opus-4-8"
 export ANTHROPIC_DEFAULT_SONNET_MODEL="databricks-claude-sonnet-5"
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="databricks-claude-haiku-4-5"
 export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1
@@ -170,8 +169,7 @@ claude --disallowedTools WebSearch
 ```powershell
 $env:ANTHROPIC_BASE_URL = "https://<workspace>.azuredatabricks.net/serving-endpoints/anthropic"
 $env:ANTHROPIC_AUTH_TOKEN = "<databricks-token>"
-$env:ANTHROPIC_MODEL = "databricks-claude-opus-4-8"
-$env:ANTHROPIC_DEFAULT_OPUS_MODEL = $env:ANTHROPIC_MODEL
+$env:ANTHROPIC_DEFAULT_OPUS_MODEL = "databricks-claude-opus-4-8"
 $env:ANTHROPIC_DEFAULT_SONNET_MODEL = "databricks-claude-sonnet-5"
 $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "databricks-claude-haiku-4-5"
 $env:CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = "1"
@@ -179,10 +177,13 @@ $env:CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = "1"
 claude --disallowedTools WebSearch
 ```
 
-위 모델 ID는 해당 workspace에서 실제 호출 가능한 값으로 바꾸세요. 기본 모델만 사용할
-때는 `ANTHROPIC_MODEL`만으로 대화를 시작할 수 있지만, 프리셋 매핑을 생략하면
-`/model haiku` 같은 별칭이 Anthropic 기본 ID로 해석될 수 있습니다. Claude Code 2.1.207
-검증에서는 `claude-haiku-4-5-20251001`로 요청해 Databricks에서 모델을 찾지 못했습니다.
+위 모델 ID는 해당 workspace에서 실제 호출 가능한 값으로 바꾸세요. `ANTHROPIC_DEFAULT_*`
+프리셋 매핑을 설정하면 `/model`의 Opus/Sonnet/Haiku 별칭이 Databricks 모델로 해석되고,
+기본 대화도 Opus 프리셋으로 라우팅됩니다. 매핑을 생략하면 `/model haiku` 같은 별칭이
+Anthropic 기본 ID로 해석될 수 있습니다. Claude Code 2.1.207 검증에서는
+`claude-haiku-4-5-20251001`로 요청해 Databricks에서 모델을 찾지 못했습니다.
+`ANTHROPIC_MODEL`은 설정하지 않습니다. 프리셋과 같은 모델을 가리키면 `/model` 목록에
+중복 항목이 생기기 때문이며, 기본 모델은 `ANTHROPIC_DEFAULT_OPUS_MODEL`로 해석됩니다.
 
 `WebSearch` deny를 생략해도 일반 코딩 작업은 시작할 수 있지만, 모델이 `WebSearch`를
 호출하면 Claude Code가 `source=web_search_tool` 요청을 Databricks로 보내고 HTTP 400
@@ -216,7 +217,6 @@ claude --disallowedTools WebSearch
   },
   "env": {
     "ANTHROPIC_BASE_URL": "https://adb-xxxx.azuredatabricks.net/serving-endpoints/anthropic",
-    "ANTHROPIC_MODEL": "databricks-claude-opus-4-8",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "databricks-claude-opus-4-8",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "databricks-claude-sonnet-5",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "databricks-claude-haiku-4-5",
@@ -228,6 +228,11 @@ claude --disallowedTools WebSearch
 
 Windows의 `apiKeyHelper`는 `powershell.exe ... get-token.ps1` 명령으로 저장됩니다.
 Fable endpoint 검증까지 성공하면 `ANTHROPIC_DEFAULT_FABLE_MODEL`도 추가됩니다.
+
+설치기는 `ANTHROPIC_MODEL`을 설정하지 않습니다. 프리셋 별칭과 같은 모델을 가리키면
+`/model` 목록에 중복 항목이 생기므로, 기본 모델은 `ANTHROPIC_DEFAULT_OPUS_MODEL`(Opus
+프리셋)로 해석되도록 둡니다. Databricks 공식 `ucode`도 같은 이유로 `ANTHROPIC_MODEL`을
+설정하지 않습니다.
 
 ### `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`이 필요한 이유
 
