@@ -14,7 +14,7 @@ Claude Code ──(Anthropic /v1/messages)──► Azure Databricks Model Servi
                                            /serving-endpoints/anthropic
 ```
 
-> 최종 검증: 2026-07-11, Claude Code 2.1.206, `databricks-claude-opus-4-8`,
+> 최종 검증: 2026-07-11, Claude Code 2.1.207, `databricks-claude-opus-4-8`,
 > 단일/다중 턴, high effort, `stop_sequences`, 도구 호출.
 
 ---
@@ -189,7 +189,7 @@ claude --disallowedTools WebSearch
 `The provided request is not valid`로 실패했습니다. 위 `--disallowedTools` 값은 해당
 실행에만 적용됩니다.
 
-반복 사용하려면 아래 설정을 `~/.claude/settings.json`에 병합하고, PAT를 평문으로
+반복 사용하려면 [§4](#4-생성되는-설정)의 설정을 `~/.claude/settings.json`에 병합하고, PAT를 평문으로
 저장하는 대신 `apiKeyHelper`를 구성하세요. 기존 `permissions.deny` 항목을 보존하면서
 `WebSearch`를 추가해야 합니다. 수동 검증을 마치면 현재 셸의 토큰도
 `unset ANTHROPIC_AUTH_TOKEN` 또는 `Remove-Item Env:ANTHROPIC_AUTH_TOKEN`으로 제거합니다.
@@ -263,6 +263,31 @@ Gateway의 `ucode` 구성을 사용하세요.
 설정기는 PAT helper만 생성하며 M2M 토큰 갱신 helper는 구현하지 않습니다. 조직 단위
 OAuth 로그인이 필요하면 Unity AI Gateway의 `ucode`를 사용하거나, Databricks CLI/SDK가
 발급한 단기 토큰을 반환하는 별도 `apiKeyHelper`를 운영해야 합니다.
+
+운영용 OAuth M2M helper 예시입니다. Databricks CLI로 서비스 주체 프로필을 한 번
+구성한 뒤, 단기 access token만 출력하도록 `get-token.sh`를 교체하고 `apiKeyHelper`로
+지정합니다.
+
+```bash
+# 1) 서비스 주체 프로필을 한 번 구성 (client_id/secret 필요)
+databricks auth login --host "$DATABRICKS_HOST" \
+  --service-principal --client-id <APP_ID> --client-secret <SECRET> -p databricks-sp
+
+# 2) ~/.claude-databricks/get-token.sh 를 아래 내용으로 교체
+#    databricks auth token 은 {"access_token","token_type":"Bearer","expiry"} 를 반환
+cat > ~/.claude-databricks/get-token.sh <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+databricks auth token -p databricks-sp \
+  | python3 -c 'import sys, json; print(json.load(sys.stdin)["access_token"])'
+SH
+chmod 700 ~/.claude-databricks/get-token.sh
+```
+
+이 access token은 약 1시간 수명이며, 설정된 `CLAUDE_CODE_API_KEY_HELPER_TTL_MS`(이
+리포 기본값 15분)마다 Claude Code가 만료 전에 helper를 다시 호출해 재발급합니다.
+`Bearer` 토큰이므로 Databricks 네이티브 Anthropic 엔드포인트 인증과 그대로 맞습니다.
+자동 설정기는 이 M2M helper를 생성하지 않으므로 운영 환경에서만 위 helper로 교체하세요.
 
 ### Custom base URL에서 달라지는 Claude Code 기능
 
