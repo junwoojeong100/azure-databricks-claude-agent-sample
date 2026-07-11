@@ -14,7 +14,7 @@ Claude Code ──(Anthropic /v1/messages)──► Azure Databricks Model Servi
                                            /serving-endpoints/anthropic
 ```
 
-> 최종 검증: 2026-07-10, Claude Code 2.1.206, `databricks-claude-opus-4-8`,
+> 최종 검증: 2026-07-11, Claude Code 2.1.206, `databricks-claude-opus-4-8`,
 > 단일/다중 턴, high effort, `stop_sequences`, 도구 호출.
 
 ---
@@ -68,7 +68,10 @@ POST https://<workspace>/serving-endpoints/anthropic/v1/messages
    ```
    - 이 가이드의 기본 Sonnet 5 매핑까지 사용하려면 2.1.197 이상을 권장합니다.
    - 최소 버전은 Opus 4.8이 2.1.154, Fable 5가 2.1.170, Sonnet 5가 2.1.197입니다.
-4. **이 리포의 `.env`**
+4. **로컬 도구**
+   - macOS/Linux: `curl`과 Python 3
+   - Windows: Windows PowerShell 5.1 이상 또는 PowerShell 7
+5. **이 리포의 `.env`**
    ```bash
    cp .env.example .env
    ```
@@ -92,7 +95,7 @@ DATABRICKS_MODELS="databricks-claude-opus-4-8 databricks-claude-sonnet-5 databri
 > 보존되며 자동 안전 시스템으로 처리되고 일부 경우 사람 검토 대상이 될 수 있습니다.
 > 안전 조사나 법적 요구가 있으면 30일을 넘어 보존될 수 있고, Anthropic은 이 보존
 > 목적의 limited subprocessor입니다. 설치기 기본 후보에도 Fable 5가 포함되므로
-> [공식 모델 정책](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/supported-models#anthropic-claude-fable-5)을
+> [공식 모델 정책](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/supported-models#claude-fable-5)을
 > 먼저 확인하세요. 승인되지 않은 워크로드에서는 `DATABRICKS_MODELS`를 Fable을 제외한
 > 모델 ID 목록으로 설정한 뒤 설치기를 실행하세요.
 
@@ -109,13 +112,13 @@ scripts/setup_claude_code_databricks.sh
 ### Windows PowerShell
 
 ```powershell
-scripts\setup_claude_code_databricks.ps1
+.\scripts\setup_claude_code_databricks.ps1
 ```
 
 실행 정책에 막히면:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\setup_claude_code_databricks.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_claude_code_databricks.ps1
 ```
 
 환경변수로 자격증명을 전달할 수도 있습니다.
@@ -130,7 +133,8 @@ scripts/setup_claude_code_databricks.sh
 스크립트가 수행하는 작업:
 
 1. `.env` 또는 환경변수에서 Databricks 설정 로드
-2. `curl`·Python·Claude Code와 충돌하는 ambient credential 사전 점검
+2. Claude Code와 충돌하는 ambient credential 사전 점검
+   (macOS/Linux에서는 `curl`과 Python도 확인)
 3. 네이티브 `/serving-endpoints/anthropic/v1/messages`와 모델 fallback 검증
 4. Databricks 토큰을 사용자 전용 파일에 저장
 5. `apiKeyHelper`, 검증된 모델 프리셋, 미지원 beta 헤더 제거 설정
@@ -186,7 +190,9 @@ Claude Code는 기본적으로 일부 Anthropic beta 헤더를 보낼 수 있습
 400 {"message":"invalid beta flag"}
 ```
 
-설치기는 이 환경변수를 자동 설정합니다.
+설치기는 이 환경변수를 자동 설정합니다. 공식
+[Claude Code 환경 변수 문서](https://code.claude.com/docs/en/env-vars)는 이 값을 `1`로
+설정하면 Anthropic 전용 beta 요청 헤더와 beta 도구 스키마 필드를 제거한다고 설명합니다.
 
 ### `WebSearch`를 비활성화하는 이유
 
@@ -395,7 +401,8 @@ rm -f ~/.claude-databricks/proxy.log
 ### Windows
 
 ```powershell
-Remove-Item -Recurse -Force "$env:USERPROFILE\.claude-databricks\.venv"
+Remove-Item -Recurse -Force "$env:USERPROFILE\.claude-databricks\.venv" `
+  -ErrorAction SilentlyContinue
 Remove-Item -Force `
   "$env:USERPROFILE\.claude-databricks\config.yaml", `
   "$env:USERPROFILE\.claude-databricks\custom_handlers.py", `

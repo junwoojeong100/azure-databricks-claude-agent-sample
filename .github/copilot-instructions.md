@@ -28,7 +28,7 @@ These rules apply to **all changes** Copilot makes in this repository.
 - Examples:
   - `feat(agent): add interactive REPL with per-turn token usage`
   - `docs: compare Databricks-hosted models vs Foundry models`
-  - `fix(client): rewrite chat/completions path to invocations`
+  - `fix(setup): preserve existing model configuration`
 
 ## Pull requests
 
@@ -91,4 +91,4 @@ Optional: known limitations, future work, screenshots, etc.
 
 - Match the surrounding style; do not introduce new linters or formatters unless asked.
 - Add comments only where intent is non-obvious.
-- Verify changes actually run (e.g. `python src/agent_sample.py`) before opening the PR.
+- Verify changes actually run using the platform-specific `.venv` Python before opening the PR.

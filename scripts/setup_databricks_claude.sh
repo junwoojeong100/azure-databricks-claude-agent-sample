@@ -11,9 +11,8 @@
 #      plus the native Anthropic Messages API for Claude
 #   6. (optional) a full run of src/agent_sample.py against a working endpoint
 #
-# Requirements: az (logged in: `az login`), and the project virtualenv at
-# .venv (create with: python3.12 -m venv .venv && .venv/bin/pip install -r
-# requirements.txt).
+# Requirements: az with the Databricks extension (logged in: `az login`), curl,
+# and a project virtualenv at .venv created with Python 3.10 or newer.
 #
 # Usage:
 #   scripts/setup_databricks_claude.sh
@@ -118,7 +117,12 @@ log "0/6 Preflight"
 command -v az >/dev/null || die "az CLI not found. Install Azure CLI and run 'az login'."
 command -v curl >/dev/null || die "curl is required."
 az account show >/dev/null 2>&1 || die "Not logged in. Run 'az login' first."
-[ -x "$PY" ] || die "venv not found at .venv. Run: python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+az extension show --name databricks >/dev/null 2>&1 ||
+  die "Azure CLI Databricks extension not found. Run: az extension add --name databricks --upgrade"
+[ -x "$PY" ] ||
+  die "venv not found at .venv. Create it with a Python 3.10+ interpreter as documented in README.md."
+"$PY" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' ||
+  die "Python 3.10 or newer is required in .venv."
 SUB_NAME="$(az account show --query name -o tsv)"
 ok "az logged in — subscription: $SUB_NAME"
 

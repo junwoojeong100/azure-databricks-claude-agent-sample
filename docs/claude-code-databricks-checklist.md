@@ -3,7 +3,7 @@
 로컬 Claude Code를 Azure Databricks-hosted Claude에 연결할 때 필요한 요건과 운영
 주의사항을 정리한 공유용 체크리스트입니다.
 
-> 최종 검증: 2026-07-10, Claude Code 2.1.206.
+> 최종 검증: 2026-07-11, Claude Code 2.1.206.
 
 > 실제 설치는 [`claude-code-databricks.md`](./claude-code-databricks.md),
 > 자동 설정은 [`scripts/setup_claude_code_databricks.sh`](../scripts/setup_claude_code_databricks.sh)
@@ -17,7 +17,7 @@
 2. Claude Code는 `/serving-endpoints/anthropic`에 직접 연결할 수 있습니다.
 3. **LiteLLM 프록시, 로컬 포트, 백그라운드 서비스가 필요하지 않습니다.**
 4. Claude Code가 보내는 미지원 beta 헤더를 막기 위해
-   `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`이 필요합니다.
+   `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`을 사용합니다.
 5. Anthropic hosted `WebSearch`는 현재 Databricks 네이티브 경로에서 지원이 문서화돼
    있지 않고 실제 `web_search_20250305` 호출도 거부되므로 bare
    `permissions.deny: ["WebSearch"]`로 숨기고, 필요하면 MCP 검색을 사용합니다.
@@ -34,6 +34,7 @@ Claude Code ──(Anthropic /v1/messages)──► Azure Databricks
 - 지원 리전의 Azure Databricks 워크스페이스
 - Databricks-hosted Claude 모델
   - 기본: `databricks-claude-opus-4-8`
+  - Sonnet 프리셋: `databricks-claude-sonnet-5`
   - Haiku/백그라운드: `databricks-claude-haiku-4-5`
   - Fable 후보: `databricks-claude-fable-5` (현재 workspace에서 실제 호출이 성공할 때만 매핑)
 - 모델 호출 권한이 있는 Databricks 인증 정보
@@ -42,6 +43,8 @@ Claude Code ──(Anthropic /v1/messages)──► Azure Databricks
 - 일반 endpoint ACL의 `CAN QUERY`; Foundation Model UC 권한 기능 사용 시 대상
   `system.ai` 모델의 `EXECUTE`
 - Claude Code CLI 2.1.197 이상 권장(Sonnet 5 기준)
+- macOS/Linux 설치기: `curl`과 Python 3
+- Windows 설치기: Windows PowerShell 5.1 이상 또는 PowerShell 7
 
 Anthropic 모델 호출이 `403 ... rate limit of 0`으로 거부되면 README의 모델/리전,
 cross-Geo, rate limit, 권한, 계정 용량 점검 순서를 확인합니다.
@@ -49,7 +52,7 @@ cross-Geo, rate limit, 권한, 계정 용량 점검 순서를 확인합니다.
 > Fable 5의 프롬프트와 응답은 trust and safety 목적으로 30일 보존되며 자동 안전
 > 시스템과 일부 경우 사람 검토의 대상이 될 수 있습니다. 안전 조사나 법적 요구 시
 > 더 오래 보존될 수 있습니다. 설치기 기본 후보에도 Fable 5가 포함되므로
-> [공식 모델 정책](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/supported-models#anthropic-claude-fable-5)을
+> [공식 모델 정책](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/supported-models#claude-fable-5)을
 > 먼저 검토하세요. 승인되지 않은 워크로드에서는 `DATABRICKS_MODELS`를 Fable을 제외한
 > 목록으로 설정하세요.
 
@@ -65,7 +68,7 @@ cross-Geo, rate limit, 권한, 계정 용량 점검 순서를 확인합니다.
 | `ANTHROPIC_DEFAULT_OPUS_MODEL` / `ANTHROPIC_DEFAULT_SONNET_MODEL` | `/model`의 Opus/Sonnet 프리셋 매핑 |
 | `ANTHROPIC_DEFAULT_HAIKU_MODEL` | Haiku 프리셋과 요약·분류 등 백그라운드 모델 |
 | `ANTHROPIC_DEFAULT_FABLE_MODEL` | Fable endpoint가 실제 검증된 경우에만 설정 |
-| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | 반드시 `1`; 미지원 beta 헤더 방지 |
+| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | `1`; 미지원 beta 헤더와 beta 도구 스키마 필드 제거 |
 | `permissions.deny` | 기존 규칙을 보존하고 bare `WebSearch` 추가 |
 
 > PAT를 `ANTHROPIC_AUTH_TOKEN`으로 `settings.json`에 직접 저장하지 않는 것을
