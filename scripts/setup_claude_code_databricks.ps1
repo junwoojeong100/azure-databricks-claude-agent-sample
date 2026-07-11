@@ -18,13 +18,13 @@
     if present, and runs an end-to-end test.
 
 .EXAMPLE
-    scripts\setup_claude_code_databricks.ps1
+    .\scripts\setup_claude_code_databricks.ps1
 
 .EXAMPLE
     $env:DATABRICKS_HOST = 'https://adb-xxx.azuredatabricks.net'
     $env:DATABRICKS_TOKEN = 'dapi...'
     $env:DATABRICKS_SERVING_ENDPOINT = 'databricks-claude-opus-4-8'
-    scripts\setup_claude_code_databricks.ps1
+    .\scripts\setup_claude_code_databricks.ps1
 #>
 [CmdletBinding()]
 param(
