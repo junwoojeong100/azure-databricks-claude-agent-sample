@@ -42,16 +42,18 @@ Foundry에서도 Claude는 Microsoft 모델이 아닙니다. 두 hosting option 
 | --- | --- | --- |
 | 개발용 인증 | PAT(legacy) 또는 사용자 OAuth | API key 또는 Microsoft Entra ID |
 | 운영용 인증 | 서비스 주체 OAuth M2M 권장 | Managed Identity/서비스 주체 + Entra ID 권장 |
-| 추론 권한 | endpoint `CAN QUERY`; Foundation Model UC 권한 사용 시 대상 `system.ai` 모델 `EXECUTE` | Foundry resource 범위의 `Foundry User` 권장 또는 `Cognitive Services User`(legacy) |
+| 추론 권한 | endpoint `CAN QUERY`; Foundation Model UC 권한 사용 시 대상 `system.ai` 모델 `EXECUTE` | Foundry resource 범위의 `Foundry User`(구 `Azure AI User`) 권장. 직접 모델 호출은 `Cognitive Services User`도 가능 |
 | 배포 권한 | 모델/endpoint 유형별 관리 권한 | Resource group `Contributor`/`Owner` + Marketplace 구독 권한 |
 | 역할 할당 | endpoint `CAN MANAGE` 또는 workspace admin | `Owner` 또는 `User Access Administrator` 등 역할 할당 권한 |
 
 Foundry에서 `Owner`나 `Contributor`만 있다고 Entra 기반 추론 권한이 생기지는 않습니다.
-호출 주체에는 별도로 `Foundry User`를 부여하는 것이 권장되며,
-`Cognitive Services User`는 같은 추론 권한을 제공하는 legacy 역할입니다. 반대로 배포
-권한과 추론 권한은 같은 역할이 아닙니다. 모델 배포의 `Contributor`/`Owner`는 resource
-group 범위이고, Marketplace offer 구독 권한은 subscription 범위이므로 scope도
-구분하세요.
+호출 주체에는 별도로 `Foundry User`(구 `Azure AI User`)를 부여하는 것이 권장됩니다.
+`Cognitive Services User`는 `Foundry User`의 이전 이름이나 별칭이 아니라 별도의
+legacy Azure AI Services 역할이지만, Foundry resource 범위에서 Claude 모델 호출
+권한도 제공합니다. Foundry project나 agent 작업에는 Foundry-native 역할을 사용하세요.
+반대로 배포 권한과 추론 권한은 같은 역할이 아닙니다. 모델 배포의
+`Contributor`/`Owner`는 resource group 범위이고, Marketplace offer 구독 권한은
+subscription 범위이므로 scope도 구분하세요.
 
 ## 3. API와 네트워크 경로
 
@@ -124,8 +126,9 @@ per-model plan을 유지할 수 있습니다. 정확한 비교 견적은 두 플
 - Hosted on Anthropic infrastructure는 Global Standard만 지원합니다.
 - Claude의 현재 배포 선택지를 일반 Foundry 모델의 PTU/Reservation 기능과 동일하게
   취급하면 안 됩니다. Claude 공식 가용성 표에 표시된 deployment type만 사용하세요.
-- Global Standard Claude 배포를 만들 수 있는 Foundry project/resource 위치는 현재
-  East US 2와 Sweden Central입니다.
+- Global Standard Claude 배포를 만들 수 있는 Foundry project/resource 위치는
+  모델과 버전별로 다릅니다. East US 2와 Sweden Central로 고정하지 말고 배포 직전
+  공식 `Region availability by deployment type` 표를 확인하세요.
 
 모델 목록과 lifecycle 상태는 두 hosting option 사이에서도 다를 수 있습니다. 최신
 모델뿐 아니라 필요한 API 기능이 선택한 option에서 지원되는지도 확인하세요.
@@ -213,7 +216,7 @@ API를 구현해야 하므로, Foundry Claude의 네이티브 Anthropic Messages
 | 작업 | Azure Databricks | Microsoft Foundry |
 | --- | --- | --- |
 | 모델 호출 권한 부여 | endpoint `CAN MANAGE` 보유자 또는 workspace admin | Azure role assignment 권한 보유자 |
-| 모델 호출 | endpoint `CAN QUERY`; Foundation Model UC 권한 사용 시 모델 `EXECUTE` | `Foundry User` 권장 또는 `Cognitive Services User`(legacy) |
+| 모델 호출 | endpoint `CAN QUERY`; Foundation Model UC 권한 사용 시 모델 `EXECUTE` | `Foundry User`(구 `Azure AI User`) 권장. 직접 모델 호출은 `Cognitive Services User`도 가능 |
 | endpoint/AI Gateway 설정 | endpoint `CAN MANAGE` | Foundry resource/project 관리 역할 |
 | Marketplace 구독·배포 | 해당 없음 | Marketplace 구매 권한 + resource group `Contributor`/`Owner` |
 | 시스템 사용량 조회 | endpoint `system.serving.*`은 전용 문서상 account admin이며 일반 system-table grant로 위임 가능. Unity `system.ai_gateway.usage`는 현재 account admin만 가능 | Foundry Monitoring, Cost Management, Monitor별 RBAC |
@@ -305,6 +308,8 @@ Diagnostic Settings의 category와 payload 제공 범위는 Foundry resource와 
 - [Claude Consumption Units billing](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/claude-models-billing)
 - [Data, privacy, and security for Claude models](https://learn.microsoft.com/azure/foundry/responsible-ai/claude-models/data-privacy)
 - [Deploy and use Claude models](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-claude)
+- [Role-based access control for Microsoft Foundry](https://learn.microsoft.com/azure/foundry/concepts/rbac-foundry)
+- [Region availability by deployment type](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/models-from-partners#region-availability-by-deployment-type)
 - [Configure keyless authentication for Foundry Models](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/configure-entra-id)
 - [Configure Claude Code for Microsoft Foundry](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/configure-claude-code)
 - [Claude Code on Microsoft Foundry](https://code.claude.com/docs/en/microsoft-foundry)
