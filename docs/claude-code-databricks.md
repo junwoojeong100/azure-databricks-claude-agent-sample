@@ -145,6 +145,55 @@ scripts/setup_claude_code_databricks.sh
 설정 과정에서 Python 가상환경, LiteLLM, 로컬 포트, 백그라운드 서비스는 생성하지
 않습니다.
 
+### 스크립트 없이 수동 연결
+
+설정 스크립트는 필수 런타임 구성요소가 아닙니다. 이미 workspace URL, 토큰, 사용할
+모델 ID를 알고 있다면 현재 셸에서 다음 값만 설정해 Claude Code를 직접 실행할 수
+있습니다.
+
+#### macOS / Linux
+
+```bash
+export ANTHROPIC_BASE_URL="https://<workspace>.azuredatabricks.net/serving-endpoints/anthropic"
+export ANTHROPIC_AUTH_TOKEN="<databricks-token>"
+export ANTHROPIC_MODEL="databricks-claude-opus-4-8"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="$ANTHROPIC_MODEL"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="databricks-claude-sonnet-5"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="databricks-claude-haiku-4-5"
+export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1
+
+claude --disallowedTools WebSearch
+```
+
+#### Windows PowerShell
+
+```powershell
+$env:ANTHROPIC_BASE_URL = "https://<workspace>.azuredatabricks.net/serving-endpoints/anthropic"
+$env:ANTHROPIC_AUTH_TOKEN = "<databricks-token>"
+$env:ANTHROPIC_MODEL = "databricks-claude-opus-4-8"
+$env:ANTHROPIC_DEFAULT_OPUS_MODEL = $env:ANTHROPIC_MODEL
+$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "databricks-claude-sonnet-5"
+$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "databricks-claude-haiku-4-5"
+$env:CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = "1"
+
+claude --disallowedTools WebSearch
+```
+
+위 모델 ID는 해당 workspace에서 실제 호출 가능한 값으로 바꾸세요. 기본 모델만 사용할
+때는 `ANTHROPIC_MODEL`만으로 대화를 시작할 수 있지만, 프리셋 매핑을 생략하면
+`/model haiku` 같은 별칭이 Anthropic 기본 ID로 해석될 수 있습니다. Claude Code 2.1.207
+검증에서는 `claude-haiku-4-5-20251001`로 요청해 Databricks에서 모델을 찾지 못했습니다.
+
+`WebSearch` deny를 생략해도 일반 코딩 작업은 시작할 수 있지만, 모델이 `WebSearch`를
+호출하면 Claude Code가 `source=web_search_tool` 요청을 Databricks로 보내고 HTTP 400
+`The provided request is not valid`로 실패했습니다. 위 `--disallowedTools` 값은 해당
+실행에만 적용됩니다.
+
+반복 사용하려면 아래 설정을 `~/.claude/settings.json`에 병합하고, PAT를 평문으로
+저장하는 대신 `apiKeyHelper`를 구성하세요. 기존 `permissions.deny` 항목을 보존하면서
+`WebSearch`를 추가해야 합니다. 수동 검증을 마치면 현재 셸의 토큰도
+`unset ANTHROPIC_AUTH_TOKEN` 또는 `Remove-Item Env:ANTHROPIC_AUTH_TOKEN`으로 제거합니다.
+
 ---
 
 ## 4. 생성되는 설정

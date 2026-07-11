@@ -88,6 +88,9 @@ macOS/Linux 설치기는 `curl`과 Python 3도 사용합니다. Claude 모델이
 
 기존 Claude Code 설정의 다른 항목은 보존됩니다. 전환 후에는 로컬 포트나 LiteLLM
 프로세스가 필요하지 않습니다.
+스크립트를 사용하지 않는 환경변수 기반 연결은
+[스크립트 없이 수동 연결](docs/claude-code-databricks.md#스크립트-없이-수동-연결)을
+참고하세요.
 
 ### 직접 연결 확인 (macOS/Linux)
 
