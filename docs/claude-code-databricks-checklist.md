@@ -48,7 +48,7 @@ Claude Code ──(Anthropic /v1/messages)──► Azure Databricks
 - [ ] `enforceAvailableModels=true`
 - [ ] 조직 전체 강제 시 두 모델 제한 키를 managed/policy settings에 함께 배포
 - [ ] Token을 보호된 helper 파일 또는 OAuth helper로 제공
-- [ ] 셸/프로필의 기존 `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY` 제거
+- [ ] 셸/프로필의 ambient `CLAUDE_CODE_USE_*` selector와 `ANTHROPIC_*` override 제거
 - [ ] Deprecated된 `ANTHROPIC_SMALL_FAST_MODEL` 제거
 - [ ] `ANTHROPIC_MODEL`을 중복 설정하지 않음
 
@@ -66,13 +66,16 @@ Claude Code ──(Anthropic /v1/messages)──► Azure Databricks
 
 - [ ] `.env`와 token helper 파일이 Git에 포함되지 않음
 - [ ] 전역 `~/.claude/settings.json` 영향 승인 또는 리포 로컬 settings 선택
+- [ ] 로컬/custom settings 사용 시 ambient credential 제거 또는 `CLAUDE_CONFIG_DIR` 격리
 - [ ] 설치 전 settings 백업 위치와 복원 절차 확인
 - [ ] 운영 환경은 PAT 대신 서비스 주체 OAuth M2M 검토
 - [ ] Fable 5 사용 시 30일 보존과 일부 사람 검토 정책 승인
 - [ ] Custom base URL에서 MCP tool search와 Remote Control 제한 인지
 - [ ] Unity AI Gateway와 serving endpoint AI Gateway를 구분
 - [ ] 모델·리전, cross-Geo, rate limit, 계정 용량 변경 가능성 검토
-- [ ] 종료 시 settings 복원, helper/.env 제거, 유지 중인 workspace의 PAT 폐기
+- [ ] 종료 시 settings 복원, 생성된 helper/.env만 제거, 유지 중인 workspace의 PAT 폐기
+- [ ] 이전 LiteLLM 복귀 가능성이 있으면 `legacy-autostart-backups` 보존
+- [ ] 이전 LiteLLM `.env`가 필요하면 `legacy-state-backups/.env.pre-direct` 보존
 
 ## 문제 발생 시 우선순위
 

@@ -14,8 +14,8 @@
     This script checks prerequisites and ambient credentials, verifies the
     endpoint and model fallbacks, stores the Databricks token in a
     user-restricted file, configures apiKeyHelper, model aliases, beta
-    filtering, and WebSearch deny, disables the legacy LiteLLM Scheduled Task
-    if present, and runs an end-to-end test.
+    filtering, and WebSearch deny, backs up and disables the legacy LiteLLM
+    Scheduled Task if present, and runs an end-to-end test.
 
 .EXAMPLE
     .\scripts\setup_claude_code_databricks.ps1
@@ -30,7 +30,7 @@
 param(
     [Alias('ProxyDir')]
     [string]$StateDir = (Join-Path $HOME '.claude-databricks'),
-    [string]$ClaudeSettings = (Join-Path (Join-Path $HOME '.claude') 'settings.json'),
+    [string]$ClaudeSettings,
     [string]$Endpoint,
     [string]$FastEndpoint,
     [string]$Models,
@@ -78,6 +78,16 @@ function Test-JsonObject {
     return $null -ne $Value -and $Value.GetType() -eq [System.Management.Automation.PSCustomObject]
 }
 
+function Test-AnthropicMessageResponse {
+    param([AllowNull()] $Response)
+    return (
+        (Test-JsonObject $Response) -and
+        $null -ne $Response.PSObject.Properties['type'] -and
+        $Response.type -is [string] -and
+        $Response.type -ceq 'message'
+    )
+}
+
 function Test-NativeModel {
     param([Parameter(Mandatory)] [string]$Model)
 
@@ -95,7 +105,7 @@ function Test-NativeModel {
             } `
             -ContentType 'application/json' `
             -Body $body
-        if ($response.type -eq 'message') {
+        if (Test-AnthropicMessageResponse $response) {
             $script:LastNativeError = $null
             return $true
         }
@@ -119,6 +129,16 @@ if (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) {
 $Root = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { (Get-Location).Path }
 if (-not $EnvFile) {
     $EnvFile = Join-Path $Root '.env'
+}
+$DefaultClaudeConfigDir = if ($env:CLAUDE_CONFIG_DIR) {
+    $env:CLAUDE_CONFIG_DIR
+}
+else {
+    Join-Path $HOME '.claude'
+}
+$DefaultClaudeSettings = Join-Path $DefaultClaudeConfigDir 'settings.json'
+if (-not $ClaudeSettings) {
+    $ClaudeSettings = $DefaultClaudeSettings
 }
 
 Write-Step '1/6 Load Databricks credentials'
@@ -218,8 +238,34 @@ Write-Step '2/6 Preflight'
 if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
     Stop-WithError 'Claude Code is not installed or not on PATH'
 }
-if ($env:ANTHROPIC_AUTH_TOKEN -or $env:ANTHROPIC_API_KEY) {
-    Stop-WithError 'clear ANTHROPIC_AUTH_TOKEN and ANTHROPIC_API_KEY in this shell before setup; ambient credentials override apiKeyHelper'
+$ConflictingClaudeVariables = @(
+    'ANTHROPIC_BASE_URL',
+    'ANTHROPIC_AUTH_TOKEN',
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_MODEL',
+    'ANTHROPIC_SMALL_FAST_MODEL',
+    'ANTHROPIC_DEFAULT_OPUS_MODEL',
+    'ANTHROPIC_DEFAULT_SONNET_MODEL',
+    'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+    'ANTHROPIC_DEFAULT_FABLE_MODEL',
+    'CLAUDE_CODE_USE_FOUNDRY',
+    'CLAUDE_CODE_USE_BEDROCK',
+    'CLAUDE_CODE_USE_VERTEX',
+    'CLAUDE_CODE_USE_MANTLE',
+    'CLAUDE_CODE_USE_ANTHROPIC_AWS'
+)
+$SetClaudeVariables = @(
+    $ConflictingClaudeVariables | Where-Object {
+        -not [string]::IsNullOrEmpty(
+            [Environment]::GetEnvironmentVariable($_, 'Process')
+        )
+    }
+)
+if ($SetClaudeVariables.Count) {
+    Stop-WithError (
+        'clear ambient Claude variables before setup; process environment overrides settings: ' +
+        ($SetClaudeVariables -join ', ')
+    )
 }
 $ClaudeVersion = (& claude --version 2>$null | Select-Object -First 1)
 Write-Ok "Claude Code: $ClaudeVersion"
@@ -276,6 +322,52 @@ New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 $StateDir = (Resolve-Path $StateDir).Path
 $TokenFile = Join-Path $StateDir '.env'
 $TokenHelper = Join-Path $StateDir 'get-token.ps1'
+
+$LegacyStateExists = (
+    (Test-Path (Join-Path $StateDir 'config.yaml')) -or
+    (Test-Path (Join-Path $StateDir 'start-proxy.ps1')) -or
+    (Test-Path (Join-Path $StateDir '.venv'))
+)
+if ((Test-Path $TokenFile) -and $LegacyStateExists) {
+    $LegacyStateBackupDir = Join-Path $StateDir 'legacy-state-backups'
+    $LegacyEnvBackup = Join-Path $LegacyStateBackupDir '.env.pre-direct'
+    if (-not (Test-Path $LegacyEnvBackup)) {
+        $LegacyEnvText = Get-Content $TokenFile -Raw
+        $RequiredLegacyKeys = @(
+            'DATABRICKS_API_KEY',
+            'DATABRICKS_API_BASE',
+            'LITELLM_MASTER_KEY'
+        )
+        $MissingLegacyKeys = @(
+            $RequiredLegacyKeys | Where-Object {
+                $LegacyEnvText -notmatch "(?m)^$([regex]::Escape($_))="
+            }
+        )
+        if ($MissingLegacyKeys.Count) {
+            Write-Note (
+                'legacy LiteLLM files exist, but .env no longer has the legacy keys; ' +
+                'no restorable legacy environment backup was created'
+            )
+        }
+        else {
+            New-Item -ItemType Directory -Force -Path $LegacyStateBackupDir | Out-Null
+            Copy-Item $TokenFile $LegacyEnvBackup
+            if ($OnWindows) {
+                & icacls $LegacyEnvBackup /inheritance:r /grant:r "${env:USERNAME}:(M)" | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Stop-WithError "failed to restrict ACLs on $LegacyEnvBackup"
+                }
+            }
+            else {
+                & chmod 600 $LegacyEnvBackup
+                if ($LASTEXITCODE -ne 0) {
+                    Stop-WithError "failed to set mode 0600 on $LegacyEnvBackup"
+                }
+            }
+            Write-Ok "backed up the legacy LiteLLM environment in $LegacyEnvBackup"
+        }
+    }
+}
 
 Set-Content -Path $TokenFile -Encoding ascii -Value @(
     '# Used only by the Claude Code apiKeyHelper. Contains a Databricks credential.'
@@ -363,6 +455,11 @@ Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_OPUS_MODEL'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_SONNET_MODEL'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_HAIKU_MODEL'
 Remove-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_DEFAULT_FABLE_MODEL'
+Remove-JsonProperty -Object $ClaudeEnv -Name 'CLAUDE_CODE_USE_FOUNDRY'
+Remove-JsonProperty -Object $ClaudeEnv -Name 'CLAUDE_CODE_USE_BEDROCK'
+Remove-JsonProperty -Object $ClaudeEnv -Name 'CLAUDE_CODE_USE_VERTEX'
+Remove-JsonProperty -Object $ClaudeEnv -Name 'CLAUDE_CODE_USE_MANTLE'
+Remove-JsonProperty -Object $ClaudeEnv -Name 'CLAUDE_CODE_USE_ANTHROPIC_AWS'
 Set-JsonProperty -Object $ClaudeEnv -Name 'ANTHROPIC_BASE_URL' -Value $AnthropicBaseUrl
 Set-JsonProperty -Object $ClaudeEnv -Name 'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS' -Value '1'
 Set-JsonProperty -Object $ClaudeEnv -Name 'CLAUDE_CODE_API_KEY_HELPER_TTL_MS' -Value '900000'
@@ -438,13 +535,28 @@ $SettingsJson = ($Settings | ConvertTo-Json -Depth 20) + [Environment]::NewLine
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($ClaudeSettings, $SettingsJson, $Utf8NoBom)
 Write-Ok "configured direct Databricks access in $ClaudeSettings"
+if ($ClaudeSettings -ne $DefaultClaudeSettings) {
+    Write-Note 'custom settings path selected; launch from its project scope or set CLAUDE_CONFIG_DIR, and clear ambient Anthropic credentials'
+}
 
 if ($OnWindows) {
     $LegacyTask = Get-ScheduledTask -TaskName $LegacyTaskName -ErrorAction SilentlyContinue
     if ($LegacyTask) {
+        $LegacyBackupDir = Join-Path $StateDir 'legacy-autostart-backups'
+        New-Item -ItemType Directory -Force -Path $LegacyBackupDir | Out-Null
+        $LegacyTaskBackup = Join-Path $LegacyBackupDir (
+            "$LegacyTaskName.xml.bak.$(Get-Date -Format 'yyyyMMddHHmmss')-$PID"
+        )
+        $LegacyTaskXml = [string](Export-ScheduledTask -TaskName $LegacyTaskName)
+        Set-Content -Path $LegacyTaskBackup -Value $LegacyTaskXml -Encoding Unicode
+        & icacls $LegacyTaskBackup /inheritance:r /grant:r "${env:USERNAME}:(M)" | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Stop-WithError "failed to restrict ACLs on $LegacyTaskBackup"
+        }
         Stop-ScheduledTask -TaskName $LegacyTaskName -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskName $LegacyTaskName -Confirm:$false
         Write-Ok "removed legacy LiteLLM Scheduled Task '$LegacyTaskName'"
+        Write-Ok "backed up the legacy Scheduled Task in $LegacyTaskBackup"
     }
 }
 if ((Test-Path (Join-Path $StateDir 'config.yaml')) -or (Test-Path (Join-Path $StateDir '.venv'))) {

@@ -13,7 +13,7 @@
 #   3. Verifies the native Anthropic endpoint and selectable model fallbacks.
 #   4. Stores the Databricks token in a 0600 file outside Claude settings.
 #   5. Configures apiKeyHelper, model aliases, beta filtering, and WebSearch deny.
-#   6. Disables the legacy LiteLLM auto-start service if present.
+#   6. Backs up and disables the legacy LiteLLM auto-start service if present.
 #   7. Runs a Claude Code end-to-end test.
 #
 # Usage:
@@ -28,7 +28,8 @@
 #   STATE_DIR                 Credential/helper directory
 #                             (default: ~/.claude-databricks)
 #   CLAUDE_SETTINGS           Claude Code settings path
-#                             (default: ~/.claude/settings.json)
+#                             (default: $CLAUDE_CONFIG_DIR/settings.json when
+#                             set, otherwise ~/.claude/settings.json)
 #   ENV_FILE                  Credential source (default: repo .env)
 #   DATABRICKS_FAST_ENDPOINT  Claude Code Haiku/lightweight background model
 #   DATABRICKS_MODELS         Models used to map /model family presets
@@ -39,7 +40,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STATE_DIR="${STATE_DIR:-${PROXY_DIR:-$HOME/.claude-databricks}}"
-CLAUDE_SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
+DEFAULT_CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+DEFAULT_CLAUDE_SETTINGS="$DEFAULT_CLAUDE_CONFIG_DIR/settings.json"
+CLAUDE_SETTINGS="${CLAUDE_SETTINGS:-$DEFAULT_CLAUDE_SETTINGS}"
 ENV_FILE="${ENV_FILE:-$ROOT/.env}"
 LEGACY_LAUNCHD_LABEL="${LEGACY_LAUNCHD_LABEL:-com.databricks.claude-proxy}"
 
@@ -134,11 +137,19 @@ native_result_summary() {
 }
 
 disable_legacy_proxy() {
-  local changed=0 plist unit
+  local changed=0 backed_up=0 plist unit backup backup_dir timestamp
+
+  backup_dir="$STATE_DIR/legacy-autostart-backups"
+  timestamp="$(date +%Y%m%d%H%M%S)-$$"
 
   if [ "$(uname -s)" = "Darwin" ]; then
     plist="$HOME/Library/LaunchAgents/$LEGACY_LAUNCHD_LABEL.plist"
     if [ -f "$plist" ]; then
+      mkdir -p "$backup_dir"
+      backup="$backup_dir/$LEGACY_LAUNCHD_LABEL.plist.bak.$timestamp"
+      cp "$plist" "$backup"
+      chmod 600 "$backup"
+      backed_up=1
       launchctl unload "$plist" >/dev/null 2>&1 || true
       rm -f "$plist"
       changed=1
@@ -148,6 +159,11 @@ disable_legacy_proxy() {
   elif command -v systemctl >/dev/null 2>&1; then
     unit="$HOME/.config/systemd/user/claude-databricks.service"
     if [ -f "$unit" ] && grep -Fq "start-proxy.sh" "$unit"; then
+      mkdir -p "$backup_dir"
+      backup="$backup_dir/claude-databricks.service.bak.$timestamp"
+      cp "$unit" "$backup"
+      chmod 600 "$backup"
+      backed_up=1
       if systemctl --user disable --now claude-databricks.service >/dev/null 2>&1; then
         rm -f "$unit"
         systemctl --user daemon-reload >/dev/null 2>&1 ||
@@ -164,6 +180,9 @@ disable_legacy_proxy() {
   elif [ -f "$STATE_DIR/config.yaml" ] || [ -d "$STATE_DIR/.venv" ]; then
     warn "legacy LiteLLM files remain in $STATE_DIR but are no longer used"
   fi
+  if [ "$backed_up" = "1" ]; then
+    ok "backed up the legacy auto-start definition in $backup_dir"
+  fi
 }
 
 log "1/6 Load Databricks credentials"
@@ -175,14 +194,27 @@ ENDPOINT="${DATABRICKS_SERVING_ENDPOINT:-databricks-claude-opus-4-8}"
 # Fable is intentionally excluded from the default probe list.
 MODELS="${DATABRICKS_MODELS:-databricks-claude-opus-4-8 databricks-claude-sonnet-5 databricks-claude-haiku-4-5}"
 MODELS="${MODELS//,/ }"
-ANTHROPIC_BASE_URL="${DATABRICKS_HOST%/}/serving-endpoints/anthropic"
 
 log "2/6 Preflight"
 command -v curl >/dev/null 2>&1 || die "curl is required"
 command -v claude >/dev/null 2>&1 || die "Claude Code is not installed or not on PATH"
-if [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] || [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  die "unset ANTHROPIC_AUTH_TOKEN and ANTHROPIC_API_KEY in this shell before setup; ambient credentials override apiKeyHelper"
+if [ -n "${ANTHROPIC_BASE_URL:-}" ] ||
+  [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] ||
+  [ -n "${ANTHROPIC_API_KEY:-}" ] ||
+  [ -n "${ANTHROPIC_MODEL:-}" ] ||
+  [ -n "${ANTHROPIC_SMALL_FAST_MODEL:-}" ] ||
+  [ -n "${ANTHROPIC_DEFAULT_OPUS_MODEL:-}" ] ||
+  [ -n "${ANTHROPIC_DEFAULT_SONNET_MODEL:-}" ] ||
+  [ -n "${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}" ] ||
+  [ -n "${ANTHROPIC_DEFAULT_FABLE_MODEL:-}" ] ||
+  [ -n "${CLAUDE_CODE_USE_FOUNDRY:-}" ] ||
+  [ -n "${CLAUDE_CODE_USE_BEDROCK:-}" ] ||
+  [ -n "${CLAUDE_CODE_USE_VERTEX:-}" ] ||
+  [ -n "${CLAUDE_CODE_USE_MANTLE:-}" ] ||
+  [ -n "${CLAUDE_CODE_USE_ANTHROPIC_AWS:-}" ]; then
+  die "unset ambient Anthropic overrides and CLAUDE_CODE_USE_* provider selectors before setup; process environment overrides Claude settings"
 fi
+ANTHROPIC_BASE_URL="${DATABRICKS_HOST%/}/serving-endpoints/anthropic"
 
 if command -v python3 >/dev/null 2>&1; then
   PYTHON="$(command -v python3)"
@@ -267,6 +299,25 @@ log "4/6 Store credential helper"
 mkdir -p "$STATE_DIR"
 STATE_DIR="$(cd "$STATE_DIR" && pwd)"
 chmod 700 "$STATE_DIR"
+if [ -f "$STATE_DIR/.env" ] &&
+  { [ -f "$STATE_DIR/config.yaml" ] ||
+    [ -f "$STATE_DIR/start-proxy.sh" ] ||
+    [ -d "$STATE_DIR/.venv" ]; }; then
+  LEGACY_STATE_BACKUP_DIR="$STATE_DIR/legacy-state-backups"
+  LEGACY_ENV_BACKUP="$LEGACY_STATE_BACKUP_DIR/.env.pre-direct"
+  if [ ! -f "$LEGACY_ENV_BACKUP" ]; then
+    if grep -q '^DATABRICKS_API_KEY=' "$STATE_DIR/.env" &&
+      grep -q '^DATABRICKS_API_BASE=' "$STATE_DIR/.env" &&
+      grep -q '^LITELLM_MASTER_KEY=' "$STATE_DIR/.env"; then
+      mkdir -p "$LEGACY_STATE_BACKUP_DIR"
+      cp "$STATE_DIR/.env" "$LEGACY_ENV_BACKUP"
+      chmod 600 "$LEGACY_ENV_BACKUP"
+      ok "backed up the legacy LiteLLM environment in $LEGACY_ENV_BACKUP"
+    else
+      warn "legacy LiteLLM files exist, but .env no longer has the legacy keys; no restorable legacy environment backup was created"
+    fi
+  fi
+fi
 OLD_UMASK="$(umask)"
 umask 077
 cat > "$STATE_DIR/.env" <<EOF
@@ -353,6 +404,11 @@ env.pop("ANTHROPIC_DEFAULT_OPUS_MODEL", None)
 env.pop("ANTHROPIC_DEFAULT_SONNET_MODEL", None)
 env.pop("ANTHROPIC_DEFAULT_HAIKU_MODEL", None)
 env.pop("ANTHROPIC_DEFAULT_FABLE_MODEL", None)
+env.pop("CLAUDE_CODE_USE_FOUNDRY", None)
+env.pop("CLAUDE_CODE_USE_BEDROCK", None)
+env.pop("CLAUDE_CODE_USE_VERTEX", None)
+env.pop("CLAUDE_CODE_USE_MANTLE", None)
+env.pop("CLAUDE_CODE_USE_ANTHROPIC_AWS", None)
 env.update(
     {
         "ANTHROPIC_BASE_URL": os.environ["ANTHROPIC_BASE_URL"],
@@ -401,6 +457,9 @@ data["enforceAvailableModels"] = True
 path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 PY
 ok "configured direct Databricks access in $CLAUDE_SETTINGS"
+if [ "$CLAUDE_SETTINGS" != "$DEFAULT_CLAUDE_SETTINGS" ]; then
+  warn "custom settings path selected; launch from its project scope or set CLAUDE_CONFIG_DIR, and clear ambient Anthropic credentials"
+fi
 disable_legacy_proxy
 
 log "6/6 Claude Code end-to-end test"
