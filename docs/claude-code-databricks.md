@@ -140,6 +140,9 @@ powershell -ExecutionPolicy Bypass `
 
 설치기는 `ANTHROPIC_MODEL`을 설정하지 않습니다. Opus/Sonnet/Haiku 프리셋이
 Databricks 모델로 해석되도록 `ANTHROPIC_DEFAULT_*_MODEL`만 설정합니다.
+사용자 `settings.json`의 `availableModels`와 `enforceAvailableModels`는 현재 사용자의
+모델 선택을 제한합니다. 조직 전체에 강제하려면 동일한 두 키를 최고 우선순위의
+managed/policy settings에 배포해야 하며, managed 설정이 사용자 목록보다 우선합니다.
 
 ## 3. 자동 설정 결과 확인
 

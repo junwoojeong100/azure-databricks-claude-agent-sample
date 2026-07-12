@@ -45,6 +45,7 @@ Claude Code ──(Anthropic /v1/messages)──► Azure Databricks
 - [ ] `permissions.deny`에 bare `WebSearch`
 - [ ] `availableModels`가 검증된 Databricks alias/ID만 포함
 - [ ] `enforceAvailableModels=true`
+- [ ] 조직 전체 강제 시 두 모델 제한 키를 managed/policy settings에 함께 배포
 - [ ] Token을 보호된 helper 파일 또는 OAuth helper로 제공
 - [ ] 셸/프로필의 기존 `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY` 제거
 - [ ] Deprecated된 `ANTHROPIC_SMALL_FAST_MODEL` 제거

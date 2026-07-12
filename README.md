@@ -120,10 +120,10 @@ DATABRICKS_MODELS="databricks-claude-opus-4-8 databricks-claude-sonnet-5 databri
 | Microsoft Agent Framework 샘플 | `/serving-endpoints/chat/completions` | 요청의 `model`에 Databricks endpoint 이름 전달 |
 | Claude Code | `/serving-endpoints/anthropic/v1/messages` | Anthropic Messages 요청의 `model`에 Databricks Claude ID 전달 |
 
-Agent Framework가 다중 턴 assistant 메시지에 추가하는 선택적 `name` 필드는
-Databricks Claude가 거부하므로 `src/agent_sample.py`의 최소 httpx 훅이 그 필드만
-제거합니다. Claude Code는 네이티브 Anthropic 경로를 사용하므로 이런 프로토콜 변환이
-필요하지 않습니다.
+Agent Framework가 다중 턴 assistant 메시지에 추가할 수 있는 선택적 `name` 필드는
+Databricks Claude가 거부합니다. `src/agent_sample.py`의 최소 httpx 훅은 메시지
+객체에서 이 `name` 필드만 제거합니다. Claude Code는 네이티브 Anthropic 경로를
+사용하므로 이런 프로토콜 변환이 필요하지 않습니다.
 
 ## 리포지토리 구성
 

@@ -101,11 +101,11 @@ client = OpenAIChatCompletionClient(
 OpenAI SDK가 `chat/completions`를 붙이고, 요청의 `model`에는
 `databricks-claude-opus-4-8` 같은 Databricks endpoint 이름이 들어갑니다.
 
-### 2. 다중 턴의 `name` 필드만 제거
+### 2. 다중 턴 메시지의 `name` 필드만 제거
 
 Agent Framework는 이전 assistant 메시지를 다시 보낼 때 선택적 OpenAI `name` 필드를
-추가할 수 있습니다. Databricks Claude는 이 필드를 거부하므로 요청 훅이 assistant
-메시지의 `name`만 제거합니다.
+추가할 수 있습니다. Databricks Claude는 메시지의 이 필드를 거부하므로 요청 훅이 각
+메시지 객체에서 `name`만 제거합니다.
 
 ```python
 for message in body.get("messages", []):
