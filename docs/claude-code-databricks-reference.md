@@ -29,7 +29,7 @@ Claude Code가 마지막 `/v1/messages`를 붙입니다.
 
 | 위치 | 역할 |
 | --- | --- |
-| 선택한 settings 파일(기본 `~/.claude/settings.json`) | Databricks Anthropic URL, 모델 프리셋, `apiKeyHelper` |
+| 선택한 settings 파일(기본 `~/.claude/settings.json` 또는 `$CLAUDE_CONFIG_DIR/settings.json`) | Databricks Anthropic URL, 모델 프리셋, `apiKeyHelper` |
 | `~/.claude-databricks/.env` | Credential source; helper가 `DATABRICKS_TOKEN`을 읽음 |
 | `~/.claude-databricks/get-token.sh` | macOS/Linux credential helper |
 | `~/.claude-databricks/get-token.ps1` | Windows credential helper |
@@ -57,10 +57,85 @@ managed 설정이 있으면 사용자 목록보다 우선합니다.
 `enforceAvailableModels`가 `/model`의 `Default` 옵션까지 잠그는 동작은 Claude Code
 2.1.175 이상에서 지원됩니다.
 
-기본 경로는 모든 프로젝트에 적용됩니다. 기존 Anthropic 연결을 프로젝트별로 유지하려면
+`CLAUDE_CONFIG_DIR`가 없을 때 기본 경로는 모든 프로젝트에 적용됩니다. 환경변수가
+있으면 설치기도 그 디렉터리의 `settings.json`을 기본 대상으로 사용합니다. 기존
+Anthropic 연결을 프로젝트별로 유지하려면
 `CLAUDE_SETTINGS=.claude/settings.local.json` 또는 PowerShell의 `-ClaudeSettings`로
 리포 로컬 파일을 선택합니다. 공유용 `.claude/settings.json`과 달리
 `settings.local.json`은 이 리포의 `.gitignore`에 포함됩니다.
+
+### 기존 Anthropic API credential과 병행
+
+리포 로컬 settings는 사용자 settings보다 우선하지만, 새 셸에서 export된
+`ANTHROPIC_BASE_URL`, credential, model override, `CLAUDE_CODE_USE_*` provider
+selector와 사용자 settings의 상속된 `env` 키를 삭제하지는 않습니다. 기존 API
+credential을 사용자 전역에 유지해야 한다면 Databricks용 설정 디렉터리를 별도로
+만들고, Claude Code를 그 디렉터리로 실행합니다.
+
+macOS/Linux:
+
+```bash
+DATABRICKS_CONFIG_DIR="$HOME/.claude-databricks-config"
+mkdir -p "$DATABRICKS_CONFIG_DIR"
+env -u ANTHROPIC_BASE_URL \
+  -u ANTHROPIC_AUTH_TOKEN \
+  -u ANTHROPIC_API_KEY \
+  -u ANTHROPIC_MODEL \
+  -u ANTHROPIC_SMALL_FAST_MODEL \
+  -u ANTHROPIC_DEFAULT_OPUS_MODEL \
+  -u ANTHROPIC_DEFAULT_SONNET_MODEL \
+  -u ANTHROPIC_DEFAULT_HAIKU_MODEL \
+  -u ANTHROPIC_DEFAULT_FABLE_MODEL \
+  -u CLAUDE_CODE_USE_FOUNDRY \
+  -u CLAUDE_CODE_USE_BEDROCK \
+  -u CLAUDE_CODE_USE_VERTEX \
+  -u CLAUDE_CODE_USE_MANTLE \
+  -u CLAUDE_CODE_USE_ANTHROPIC_AWS \
+  CLAUDE_SETTINGS="$DATABRICKS_CONFIG_DIR/settings.json" \
+  scripts/setup_claude_code_databricks.sh
+
+env -u ANTHROPIC_BASE_URL \
+  -u ANTHROPIC_AUTH_TOKEN \
+  -u ANTHROPIC_API_KEY \
+  -u ANTHROPIC_MODEL \
+  -u ANTHROPIC_SMALL_FAST_MODEL \
+  -u ANTHROPIC_DEFAULT_OPUS_MODEL \
+  -u ANTHROPIC_DEFAULT_SONNET_MODEL \
+  -u ANTHROPIC_DEFAULT_HAIKU_MODEL \
+  -u ANTHROPIC_DEFAULT_FABLE_MODEL \
+  -u CLAUDE_CODE_USE_FOUNDRY \
+  -u CLAUDE_CODE_USE_BEDROCK \
+  -u CLAUDE_CODE_USE_VERTEX \
+  -u CLAUDE_CODE_USE_MANTLE \
+  -u CLAUDE_CODE_USE_ANTHROPIC_AWS \
+  CLAUDE_CONFIG_DIR="$DATABRICKS_CONFIG_DIR" \
+  claude
+```
+
+Windows PowerShell:
+
+```powershell
+$DatabricksConfigDir = Join-Path $HOME '.claude-databricks-config'
+New-Item -ItemType Directory -Force -Path $DatabricksConfigDir | Out-Null
+Remove-Item `
+    Env:ANTHROPIC_BASE_URL, Env:ANTHROPIC_AUTH_TOKEN, Env:ANTHROPIC_API_KEY, `
+    Env:ANTHROPIC_MODEL, Env:ANTHROPIC_SMALL_FAST_MODEL, `
+    Env:ANTHROPIC_DEFAULT_OPUS_MODEL, Env:ANTHROPIC_DEFAULT_SONNET_MODEL, `
+    Env:ANTHROPIC_DEFAULT_HAIKU_MODEL, Env:ANTHROPIC_DEFAULT_FABLE_MODEL, `
+    Env:CLAUDE_CODE_USE_FOUNDRY, Env:CLAUDE_CODE_USE_BEDROCK, `
+    Env:CLAUDE_CODE_USE_VERTEX, Env:CLAUDE_CODE_USE_MANTLE, `
+    Env:CLAUDE_CODE_USE_ANTHROPIC_AWS `
+    -ErrorAction SilentlyContinue
+powershell -ExecutionPolicy Bypass `
+    -File .\scripts\setup_claude_code_databricks.ps1 `
+    -ClaudeSettings (Join-Path $DatabricksConfigDir 'settings.json')
+
+$env:CLAUDE_CONFIG_DIR = $DatabricksConfigDir
+claude
+```
+
+기본 `~/.claude`의 Pro/Max/API 설정은 그대로 남고, 위 명령으로 시작한 프로세스만
+Databricks 전용 settings와 `apiKeyHelper`를 사용합니다.
 
 ### 백업에서 복원
 
@@ -292,10 +367,15 @@ ucode claude
 - Base URL을 Databricks 네이티브 Anthropic API로 변경
 - 기존 로컬 프록시 credential 제거
 - `ANTHROPIC_SMALL_FAST_MODEL`을 Haiku 프리셋으로 이관한 뒤 deprecated key 제거
-- launchd, systemd, Scheduled Task의 이전 프록시 자동 시작 중지
+- legacy 전용 키가 남은 LiteLLM `.env`만
+  `legacy-state-backups/.env.pre-direct`에 한 번 보안 백업
+- launchd, systemd, Scheduled Task 정의를 `legacy-autostart-backups`에 백업한 뒤
+  이전 프록시 자동 시작 중지
 - 기존 LiteLLM 파일은 자동 삭제하지 않음
 
-직접 연결을 확인한 뒤 다음 레거시 파일을 정리할 수 있습니다.
+직접 연결을 확인하고 이전 LiteLLM으로 돌아가지 않을 것이 확실할 때만 다음 레거시
+파일을 정리합니다. 되돌릴 가능성이 있으면 이 삭제 단계 전체를 건너뛰고
+`legacy-state-backups`와 `legacy-autostart-backups`도 함께 보존하세요.
 
 macOS/Linux:
 
@@ -324,26 +404,38 @@ Remove-Item -Force `
 
 ## 10. Databricks 직접 연결 제거
 
-Claude Code를 설치 전 상태로 되돌릴 때는 다음 순서를 사용합니다.
+Databricks 직접 연결을 제거할 때는 다음 순서를 사용합니다. Settings 백업을 복원해도
+중지된 이전 LiteLLM 자동 시작이 저절로 다시 등록되지는 않습니다.
 
 1. 실행 중인 Claude Code 세션 종료
 2. [백업에서 복원](#백업에서-복원) 절차로 설치 직전 settings 복원
-3. 더 이상 필요하지 않은 helper와 credential 제거
+3. 이 설치기가 만든 helper와 credential만 제거
 4. 기존 workspace를 유지한다면 해당 PAT를 workspace UI에서 폐기
+5. 이전 LiteLLM으로 되돌릴 때만 자동 시작 백업을 명시적으로 복원
 
 macOS/Linux:
 
 ```bash
-# 다른 Claude settings가 사용하지 않을 때만 삭제
-rm -rf "$HOME/.claude-databricks"
+rm -f "$HOME/.claude-databricks/.env"
+rm -f "$HOME/.claude-databricks/get-token.sh"
+rm -f "$HOME/.claude-databricks/get-token.ps1"
+rmdir "$HOME/.claude-databricks" 2>/dev/null || true
 rm -f .env
 ```
 
 Windows PowerShell:
 
 ```powershell
-Remove-Item "$HOME\.claude-databricks" -Recurse -Force `
-    -ErrorAction SilentlyContinue
+$StateDir = Join-Path $HOME '.claude-databricks'
+Remove-Item `
+    (Join-Path $StateDir '.env'), `
+    (Join-Path $StateDir 'get-token.sh'), `
+    (Join-Path $StateDir 'get-token.ps1') `
+    -Force -ErrorAction SilentlyContinue
+if ((Test-Path $StateDir) -and
+    -not (Get-ChildItem $StateDir -Force | Select-Object -First 1)) {
+    Remove-Item $StateDir -Force
+}
 Remove-Item .env -Force -ErrorAction SilentlyContinue
 ```
 
@@ -354,9 +446,64 @@ Remove-Item .env -Force -ErrorAction SilentlyContinue
 
 Workspace를 삭제하면 그 workspace의 PAT는 더 이상 유효하지 않지만 로컬 파일은 자동
 삭제되지 않습니다. 기존 workspace를 유지하는 경우에는 로컬 파일 삭제만으로 PAT가
-폐기되지 않으므로 UI에서 token을 명시적으로 revoke합니다. 기본 state directory를
-다른 Claude settings도 참조한다면 전체 디렉터리 대신 더 이상 쓰지 않는 credential만
-선별해 제거합니다.
+폐기되지 않으므로 UI에서 token을 명시적으로 revoke합니다.
+
+### 이전 LiteLLM 자동 시작 복원
+
+이 절차는 이전 LiteLLM 구성을 다시 사용하려는 경우에만 실행합니다. 먼저
+`~/.claude-databricks/legacy-state-backups/.env.pre-direct`와
+`legacy-autostart-backups`의 파일을 검토하고, `.venv`, `config.yaml`,
+`custom_handlers.py`, `start-proxy.*`를 삭제하지 않았는지 확인하세요. Legacy
+environment 백업은 기존 `.env`에 `DATABRICKS_API_KEY`, `DATABRICKS_API_BASE`,
+`LITELLM_MASTER_KEY`가 모두 있을 때만 생성됩니다. 백업이 없거나 관련 파일을 이미
+삭제했다면 기존 LiteLLM에 필요한 환경과 파일을 직접 다시 구성해야 합니다.
+
+macOS/Linux legacy environment:
+
+```bash
+STATE_DIR="$HOME/.claude-databricks"
+cp "$STATE_DIR/legacy-state-backups/.env.pre-direct" "$STATE_DIR/.env"
+chmod 600 "$STATE_DIR/.env"
+```
+
+macOS launchd 기본 label:
+
+```bash
+BACKUP="$HOME/.claude-databricks/legacy-autostart-backups/com.databricks.claude-proxy.plist.bak.<timestamp>"
+PLIST="$HOME/Library/LaunchAgents/com.databricks.claude-proxy.plist"
+cp "$BACKUP" "$PLIST"
+launchctl load "$PLIST"
+```
+
+Linux systemd user service:
+
+```bash
+BACKUP="$HOME/.claude-databricks/legacy-autostart-backups/claude-databricks.service.bak.<timestamp>"
+mkdir -p "$HOME/.config/systemd/user"
+cp "$BACKUP" "$HOME/.config/systemd/user/claude-databricks.service"
+systemctl --user daemon-reload
+systemctl --user enable --now claude-databricks.service
+```
+
+Windows Scheduled Task:
+
+```powershell
+$StateDir = Join-Path $HOME '.claude-databricks'
+Copy-Item `
+    (Join-Path $StateDir 'legacy-state-backups\.env.pre-direct') `
+    (Join-Path $StateDir '.env') -Force
+icacls (Join-Path $StateDir '.env') `
+    /inheritance:r /grant:r "${env:USERNAME}:(M)" | Out-Null
+
+$Backup = "$HOME\.claude-databricks\legacy-autostart-backups\ClaudeDatabricksProxy.xml.bak.<timestamp>"
+Register-ScheduledTask `
+    -TaskName 'ClaudeDatabricksProxy' `
+    -Xml (Get-Content $Backup -Raw) | Out-Null
+Start-ScheduledTask -TaskName 'ClaudeDatabricksProxy'
+```
+
+설치 때 custom launchd label 또는 Scheduled Task 이름을 지정했다면 복원 명령에도 같은
+이름을 사용합니다.
 
 ## 11. 문제 해결
 
@@ -364,7 +511,7 @@ Workspace를 삭제하면 그 workspace의 PAT는 더 이상 유효하지 않지
 | --- | --- |
 | 지원하지 않는 beta/필드 관련 400 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` 확인 |
 | `401 Credential was not sent` | `apiKeyHelper` command와 token 파일 권한 확인 |
-| 다른 key로 인증됨 | 셸과 프로필의 `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY` 제거 |
+| 다른 provider/host/key/model이 사용됨 | 셸과 프로필의 ambient `CLAUDE_CODE_USE_*` selector와 `ANTHROPIC_*` override 제거 |
 | `403 ... rate limit of 0` | 모델·리전, cross-Geo, endpoint/사용자 rate limit, 권한, 계정 용량 확인 |
 | `/ai-gateway/...` 실패 | Unity AI Gateway Preview, Unity Catalog, 리전, model service 권한 확인 |
 | `/model`의 모델 실패 | 실제 endpoint ID와 리전 가용성 확인 |

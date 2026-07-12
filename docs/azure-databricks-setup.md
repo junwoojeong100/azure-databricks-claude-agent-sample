@@ -137,12 +137,15 @@ Databricks CLI가 설치되어 있고 OAuth 사용자 로그인이 허용된 환
 macOS, Linux에서 다음 명령도 사용할 수 있습니다.
 
 ```text
-databricks auth login --host "https://<workspace-host>"
-databricks tokens create --comment "claude-on-azure-databricks" --lifetime-seconds 7776000
+databricks auth login --host "https://<workspace-host>" --profile claude-databricks
+databricks tokens create --profile claude-databricks --comment "claude-on-azure-databricks" --lifetime-seconds 7776000
 ```
 
-두 번째 명령의 `token_value`는 다시 표시되지 않으므로 즉시 `.env`에 옮깁니다. 자세한
-절차는 [PAT 생성 문서](https://learn.microsoft.com/azure/databricks/dev-tools/auth/pat#create-personal-access-tokens-for-workspace-users)와
+두 명령에 같은 profile을 명시해야 기존 `DEFAULT`나 다른 workspace profile로 PAT를
+잘못 만드는 일을 피할 수 있습니다. 두 번째 명령의 `token_value`는 다시 표시되지
+않으므로 즉시 `.env`에 옮깁니다. 자세한 절차는
+[CLI 인증 문서](https://learn.microsoft.com/azure/databricks/dev-tools/cli/authentication#oauth-user-to-machine-u2m-authentication),
+[PAT 생성 문서](https://learn.microsoft.com/azure/databricks/dev-tools/auth/pat#create-personal-access-tokens-for-workspace-users)와
 [`tokens` CLI 문서](https://learn.microsoft.com/azure/databricks/dev-tools/cli/reference/tokens-commands)를
 확인하세요.
 
@@ -280,8 +283,10 @@ macOS/Linux에서 기본 전역 설정을 사용한 경우:
 ```bash
 ls -1t "$HOME"/.claude/settings.json.bak.*
 cp "$HOME/.claude/settings.json.bak.<timestamp>" "$HOME/.claude/settings.json"
-# 다른 Claude settings가 사용하지 않을 때만 삭제
-rm -rf "$HOME/.claude-databricks"
+rm -f "$HOME/.claude-databricks/.env"
+rm -f "$HOME/.claude-databricks/get-token.sh"
+rm -f "$HOME/.claude-databricks/get-token.ps1"
+rmdir "$HOME/.claude-databricks" 2>/dev/null || true
 rm -f .env
 ```
 
@@ -292,8 +297,16 @@ Get-ChildItem "$HOME\.claude\settings.json.bak.*" |
     Sort-Object LastWriteTime -Descending
 Copy-Item "$HOME\.claude\settings.json.bak.<timestamp>" `
     "$HOME\.claude\settings.json" -Force
-Remove-Item "$HOME\.claude-databricks" -Recurse -Force `
-    -ErrorAction SilentlyContinue
+$StateDir = Join-Path $HOME '.claude-databricks'
+Remove-Item `
+    (Join-Path $StateDir '.env'), `
+    (Join-Path $StateDir 'get-token.sh'), `
+    (Join-Path $StateDir 'get-token.ps1') `
+    -Force -ErrorAction SilentlyContinue
+if ((Test-Path $StateDir) -and
+    -not (Get-ChildItem $StateDir -Force | Select-Object -First 1)) {
+    Remove-Item $StateDir -Force
+}
 Remove-Item .env -Force -ErrorAction SilentlyContinue
 ```
 
@@ -301,14 +314,19 @@ Remove-Item .env -Force -ErrorAction SilentlyContinue
 백업을 복원합니다. 설치 전 설정 파일이 없어서 백업도 없다면 파일 전체를 지우기 전에
 Databricks 관련 키 외에 보존할 설정이 없는지 확인하세요. 자세한 제거 범위는
 [상세 참고의 되돌리기 절차](claude-code-databricks-reference.md#10-databricks-직접-연결-제거)를
-확인합니다. 기본 `~/.claude-databricks` state directory를 다른 settings가 참조하고
-있다면 해당 디렉터리는 삭제하지 마세요.
+확인합니다. 위 명령은 현재 설치기가 만든 token/helper만 제거하고, 이전 LiteLLM 파일과
+자동 시작 백업은 보존합니다.
 
 방법 A로 만든 전용 리소스 그룹이 더 이상 필요하지 않을 때만 삭제합니다. 기존
-workspace나 다른 리소스를 공유하는 그룹에는 실행하지 마세요.
+workspace나 다른 리소스를 공유하는 그룹에는 실행하지 마세요. `RG=my-rg`로 설정했다면
+반드시 그때 사용한 정확한 이름과 구독 ID를 지정하고, 삭제 전에 리소스 그룹을 다시
+확인합니다. 같은 이름의 리소스 그룹이 다른 구독에도 있을 수 있습니다.
 
 ```bash
-az group delete -n rg-databricks-claude --yes --no-wait
+SUBSCRIPTION_ID="<subscription-id-used-during-setup>"
+RESOURCE_GROUP="<resource-group-used-during-setup>"
+az group show --subscription "$SUBSCRIPTION_ID" -n "$RESOURCE_GROUP" -o table
+az group delete --subscription "$SUBSCRIPTION_ID" -n "$RESOURCE_GROUP" --yes --no-wait
 ```
 
 다음 단계: [Microsoft Agent Framework 실습](agent-framework.md)

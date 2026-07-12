@@ -14,6 +14,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BASH_SETUP = ROOT / "scripts" / "setup_claude_code_databricks.sh"
 PYTHON_HEREDOC = re.compile(r"<<'PY'\n(.*?)\nPY", re.DOTALL)
+CONFLICTING_CLAUDE_VARIABLES = (
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_SMALL_FAST_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_MANTLE",
+    "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+)
 
 
 def embedded_python_blocks() -> list[str]:
@@ -26,6 +42,109 @@ def native_response_check() -> str:
     start = script.index(marker) + len(marker)
     end = script.index("\n'", start)
     return script[start:end].lstrip("\n")
+
+
+def run_bash_setup(
+    extra_environment: dict[str, str] | None = None,
+    legacy_environment: str | None = None,
+    use_ambient_config_dir: bool = False,
+):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        home = temp_path / "home"
+        fake_bin = temp_path / "bin"
+        home.mkdir()
+        fake_bin.mkdir()
+
+        fake_curl = fake_bin / "curl"
+        fake_curl.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf '%s\\n%s' '{\"type\":\"message\",\"content\":[]}' '200'\n",
+            encoding="utf-8",
+        )
+        fake_curl.chmod(0o755)
+
+        fake_claude = fake_bin / "claude"
+        fake_claude.write_text(
+            "#!/usr/bin/env bash\n"
+            "if [ \"${1:-}\" = \"--version\" ]; then\n"
+            "  printf '%s\\n' '2.1.207'\n"
+            "else\n"
+            "  printf '%s\\n' '{\"is_error\":false,\"result\":\"DIRECT OK\"}'\n"
+            "fi\n",
+            encoding="utf-8",
+        )
+        fake_claude.chmod(0o755)
+
+        for command_name, command_body in (
+            ("uname", "printf '%s\\n' 'TestOS'"),
+            ("launchctl", "exit 0"),
+            ("systemctl", "exit 0"),
+        ):
+            fake_command = fake_bin / command_name
+            fake_command.write_text(
+                f"#!/usr/bin/env bash\n{command_body}\n",
+                encoding="utf-8",
+            )
+            fake_command.chmod(0o755)
+
+        env_file = temp_path / ".env"
+        env_file.write_text(
+            "DATABRICKS_HOST=https://adb-1234567890123456.7.azuredatabricks.net\n"
+            "DATABRICKS_TOKEN=test-token\n",
+            encoding="utf-8",
+        )
+        config_dir = (
+            home / ".claude-databricks-config"
+            if use_ambient_config_dir
+            else home / ".claude"
+        )
+        settings_path = config_dir / "settings.json"
+        state_dir = home / ".claude-databricks"
+        if legacy_environment is not None:
+            state_dir.mkdir()
+            (state_dir / ".env").write_text(legacy_environment, encoding="utf-8")
+            (state_dir / "config.yaml").write_text("model_list: []\n", encoding="utf-8")
+
+        environment = os.environ.copy()
+        for name in (*CONFLICTING_CLAUDE_VARIABLES, "DATABRICKS_HOST", "DATABRICKS_TOKEN"):
+            environment.pop(name, None)
+        environment.pop("CLAUDE_CONFIG_DIR", None)
+        environment.pop("CLAUDE_SETTINGS", None)
+        environment.update(
+            {
+                "HOME": str(home),
+                "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+                "ENV_FILE": str(env_file),
+                "STATE_DIR": str(state_dir),
+            }
+        )
+        if use_ambient_config_dir:
+            environment["CLAUDE_CONFIG_DIR"] = str(config_dir)
+        else:
+            environment["CLAUDE_SETTINGS"] = str(settings_path)
+        if extra_environment:
+            environment.update(extra_environment)
+
+        result = subprocess.run(
+            ["bash", str(BASH_SETUP)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        settings = (
+            json.loads(settings_path.read_text(encoding="utf-8"))
+            if settings_path.exists()
+            else None
+        )
+        legacy_backup_path = state_dir / "legacy-state-backups" / ".env.pre-direct"
+        legacy_backup = (
+            legacy_backup_path.read_text(encoding="utf-8")
+            if legacy_backup_path.exists()
+            else None
+        )
+        return result, settings, legacy_backup
 
 
 class SetupScriptTests(unittest.TestCase):
@@ -55,6 +174,52 @@ class SetupScriptTests(unittest.TestCase):
             self.assertEqual(result.returncode, expected_code, body)
             self.assertEqual(result.stderr, "", body)
 
+    def test_bash_setup_does_not_reject_internal_base_url(self) -> None:
+        result, settings, _ = run_bash_setup()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(settings)
+        self.assertEqual(
+            settings["env"]["ANTHROPIC_BASE_URL"],
+            "https://adb-1234567890123456.7.azuredatabricks.net/"
+            "serving-endpoints/anthropic",
+        )
+
+    def test_bash_setup_rejects_provider_selector(self) -> None:
+        result, settings, _ = run_bash_setup({"CLAUDE_CODE_USE_FOUNDRY": "1"})
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(settings)
+        self.assertIn("CLAUDE_CODE_USE_* provider selectors", result.stderr)
+
+    def test_bash_setup_uses_ambient_config_directory(self) -> None:
+        result, settings, _ = run_bash_setup(use_ambient_config_dir=True)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(settings)
+
+    def test_bash_setup_backs_up_complete_legacy_environment(self) -> None:
+        legacy_environment = (
+            "DATABRICKS_API_KEY=legacy-key\n"
+            "DATABRICKS_API_BASE=https://legacy.example\n"
+            "LITELLM_MASTER_KEY=legacy-master\n"
+        )
+        result, _, legacy_backup = run_bash_setup(
+            legacy_environment=legacy_environment
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(legacy_backup, legacy_environment)
+
+    def test_bash_setup_does_not_backup_direct_environment_as_legacy(self) -> None:
+        result, _, legacy_backup = run_bash_setup(
+            legacy_environment="DATABRICKS_TOKEN=already-direct\n"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(legacy_backup)
+        self.assertIn("no restorable legacy environment backup", result.stdout)
+
     def test_settings_merge_preserves_unrelated_values(self) -> None:
         merge_block = next(
             block
@@ -76,6 +241,11 @@ class SetupScriptTests(unittest.TestCase):
                             "ANTHROPIC_MODEL": "old-model",
                             "ANTHROPIC_SMALL_FAST_MODEL": "old-fast-model",
                             "ANTHROPIC_DEFAULT_OPUS_MODEL": "old-opus",
+                            "CLAUDE_CODE_USE_FOUNDRY": "1",
+                            "CLAUDE_CODE_USE_BEDROCK": "1",
+                            "CLAUDE_CODE_USE_VERTEX": "1",
+                            "CLAUDE_CODE_USE_MANTLE": "1",
+                            "CLAUDE_CODE_USE_ANTHROPIC_AWS": "1",
                         },
                         "permissions": {
                             "deny": ["Bash(rm:*)", "WebSearch"],
@@ -166,6 +336,11 @@ class SetupScriptTests(unittest.TestCase):
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_MODEL",
             "ANTHROPIC_SMALL_FAST_MODEL",
+            "CLAUDE_CODE_USE_FOUNDRY",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_USE_MANTLE",
+            "CLAUDE_CODE_USE_ANTHROPIC_AWS",
         ):
             self.assertNotIn(removed_key, env)
 
