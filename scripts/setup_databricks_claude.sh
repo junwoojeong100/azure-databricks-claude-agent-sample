@@ -273,8 +273,12 @@ if [ "$CODE" = "200" ]; then
   WORKING_ENDPOINT="$ENDPOINT"
   NATIVE_CODE="$(smoke_anthropic "$ENDPOINT")"
   if [ "$NATIVE_CODE" = "200" ]; then
-    NATIVE_TYPE="$("$PY" -c "import json,sys;print(json.load(open(sys.argv[1])).get('type',''))" "$ANTHROPIC_SMOKE_FILE")"
-    ok "native Anthropic route responded with type='$NATIVE_TYPE'"
+    NATIVE_TYPE="$("$PY" -c "import json,sys;print(json.load(open(sys.argv[1])).get('type',''))" "$ANTHROPIC_SMOKE_FILE" 2>/dev/null || true)"
+    if [ "$NATIVE_TYPE" = "message" ]; then
+      ok "native Anthropic route responded with type='message'"
+    else
+      warn "native Anthropic route returned HTTP 200 without type='message'"
+    fi
   else
     warn "native Anthropic route failed for '$ENDPOINT' (HTTP $NATIVE_CODE)"
   fi

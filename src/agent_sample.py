@@ -14,6 +14,7 @@ import itertools
 import json
 import os
 import sys
+from collections.abc import Mapping
 
 import httpx
 from dotenv import load_dotenv
@@ -94,6 +95,30 @@ SAMPLE_QUESTIONS = [
 
 
 _ZERO_RATE_LIMIT_ERROR_HINTS = ("rate limit of 0",)
+
+
+def _usage_value(usage: object, name: str) -> int | None:
+    value = (
+        usage.get(name) if isinstance(usage, Mapping) else getattr(usage, name, None)
+    )
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _normalized_token_counts(usage: object) -> tuple[int, int, int]:
+    input_count = _usage_value(usage, "input_token_count") or 0
+    output_count = _usage_value(usage, "output_token_count") or 0
+    total_count = _usage_value(usage, "total_token_count")
+
+    if total_count is None:
+        total_count = input_count + output_count
+    elif total_count >= output_count and input_count + output_count != total_count:
+        # OpenAI-compatible streams can repeat the prompt-token snapshot.
+        # Agent Framework sums those snapshots, while total/output remain authoritative.
+        input_count = total_count - output_count
+
+    return input_count, output_count, total_count
 
 
 def _looks_like_zero_rate_limit_error(exc: BaseException) -> bool:
@@ -197,14 +222,7 @@ async def main() -> None:
             response = await stream.get_final_response()
             usage = response.usage_details
             if usage is not None:
-                if isinstance(usage, dict):
-                    inp = usage.get("input_token_count", 0) or 0
-                    out = usage.get("output_token_count", 0) or 0
-                    tot = usage.get("total_token_count") or (inp + out)
-                else:
-                    inp = getattr(usage, "input_token_count", 0) or 0
-                    out = getattr(usage, "output_token_count", 0) or 0
-                    tot = getattr(usage, "total_token_count", None) or (inp + out)
+                inp, out, tot = _normalized_token_counts(usage)
                 total_input += inp
                 total_output += out
                 total_all += tot

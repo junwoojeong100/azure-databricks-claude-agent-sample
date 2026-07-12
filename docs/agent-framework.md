@@ -13,7 +13,7 @@ Agent Framework
 Databricks의 이 경로는 Chat Completions API이므로, Agent Framework에서 Responses
 클라이언트가 아닌 `OpenAIChatCompletionClient`를 사용합니다.
 
-> 최종 검증: 2026-07-12, `agent-framework-openai` 1.0.1.
+> 최종 검증: 2026-07-13, `agent-framework-openai` 1.0.1 및 1.10.1.
 
 ## 사전 준비
 
@@ -44,7 +44,7 @@ py -3 -m venv .venv
 
 Python 3.10 이상이 필요합니다.
 `requirements.txt`의 하한은 `agent-framework-openai>=1.0.0`이며 이 가이드는
-1.0.1로 검증했습니다. 설치된 버전은 다음처럼 확인할 수 있습니다.
+1.0.1과 1.10.1로 검증했습니다. 설치된 버전은 다음처럼 확인할 수 있습니다.
 
 ```bash
 .venv/bin/python -c \
@@ -122,6 +122,13 @@ for message in body.get("messages", []):
 ```
 
 URL이나 응답 형식은 바꾸지 않으며 LiteLLM도 사용하지 않습니다.
+
+### 3. 스트리밍 token 사용량 보정
+
+OpenAI 호환 스트림은 같은 input token snapshot을 둘 이상의 usage update에 포함할 수
+있습니다. Agent Framework의 최종 스트림 응답이 이 값을 합산하면 input 수치만 중복될
+수 있으므로, 샘플은 `total = input + output` 관계로 input 값을 보정합니다. output과
+total이 일치하는 정상 응답은 그대로 사용합니다.
 
 ## 문제 해결
 

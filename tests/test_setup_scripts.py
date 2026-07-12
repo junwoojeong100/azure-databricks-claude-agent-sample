@@ -67,10 +67,10 @@ def run_bash_setup(
         fake_claude = fake_bin / "claude"
         fake_claude.write_text(
             "#!/usr/bin/env bash\n"
-            "if [ \"${1:-}\" = \"--version\" ]; then\n"
+            'if [ "${1:-}" = "--version" ]; then\n'
             "  printf '%s\\n' '2.1.207'\n"
             "else\n"
-            "  printf '%s\\n' '{\"is_error\":false,\"result\":\"DIRECT OK\"}'\n"
+            '  printf \'%s\\n\' \'{"is_error":false,"result":"DIRECT OK"}\'\n'
             "fi\n",
             encoding="utf-8",
         )
@@ -107,7 +107,11 @@ def run_bash_setup(
             (state_dir / "config.yaml").write_text("model_list: []\n", encoding="utf-8")
 
         environment = os.environ.copy()
-        for name in (*CONFLICTING_CLAUDE_VARIABLES, "DATABRICKS_HOST", "DATABRICKS_TOKEN"):
+        for name in (
+            *CONFLICTING_CLAUDE_VARIABLES,
+            "DATABRICKS_HOST",
+            "DATABRICKS_TOKEN",
+        ):
             environment.pop(name, None)
         environment.pop("CLAUDE_CONFIG_DIR", None)
         environment.pop("CLAUDE_SETTINGS", None)
@@ -204,9 +208,7 @@ class SetupScriptTests(unittest.TestCase):
             "DATABRICKS_API_BASE=https://legacy.example\n"
             "LITELLM_MASTER_KEY=legacy-master\n"
         )
-        result, _, legacy_backup = run_bash_setup(
-            legacy_environment=legacy_environment
-        )
+        result, _, legacy_backup = run_bash_setup(legacy_environment=legacy_environment)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(legacy_backup, legacy_environment)

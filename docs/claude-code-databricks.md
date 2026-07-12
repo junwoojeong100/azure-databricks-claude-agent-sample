@@ -11,7 +11,7 @@ Claude Code
 
 **LiteLLM, 로컬 프록시, 별도 포트, 백그라운드 서비스는 필요하지 않습니다.**
 
-> 최종 검증: 2026-07-12, Claude Code 2.1.207,
+> 최종 검증: 2026-07-13, Claude Code 2.1.207,
 > `databricks-claude-opus-4-8`, 단일/다중 턴, high effort,
 > `stop_sequences`, 일반 도구 호출.
 
