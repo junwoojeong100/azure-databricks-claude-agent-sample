@@ -114,9 +114,27 @@ class DocumentationTests(unittest.TestCase):
             "availableModels",
             "enforceAvailableModels",
             "apiKeyHelper",
+            "for model in opus sonnet haiku",
             "## 4. 모델 선택기",
         ):
             self.assertIn(required_text, guide)
+
+        settings_code = next(
+            code
+            for language, code, _ in fenced_blocks(guide_path)
+            if language == "json"
+        )
+        settings = json.loads(settings_code)
+        self.assertEqual(settings["availableModels"], ["opus", "sonnet", "haiku"])
+        self.assertTrue(settings["enforceAvailableModels"])
+        self.assertEqual(
+            settings["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+            "databricks-claude-opus-4-8[1m]",
+        )
+        self.assertEqual(
+            settings["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            "databricks-claude-sonnet-5[1m]",
+        )
 
     def test_local_links_and_anchors_resolve(self) -> None:
         anchor_cache = {path: markdown_anchors(path) for path in MARKDOWN_FILES}

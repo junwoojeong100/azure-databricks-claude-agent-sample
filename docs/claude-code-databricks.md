@@ -9,7 +9,7 @@ Claude Code
        └─ Azure Databricks /serving-endpoints/anthropic/v1/messages
 ```
 
-> 최종 검증: 2026-07-13, Claude Code 2.1.207.
+> 최종 검증: 2026-07-14, Claude Code 2.1.207.
 
 ## 1. 필요한 값
 
@@ -78,9 +78,9 @@ New-Item -ItemType Directory -Force -Path "$HOME\.claude" | Out-Null
   "env": {
     "ANTHROPIC_BASE_URL": "https://<workspace-host>/serving-endpoints/anthropic",
     "ANTHROPIC_AUTH_TOKEN": "<databricks-pat>",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "databricks-claude-opus-4-8",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "databricks-claude-opus-4-8[1m]",
     "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Opus 4.8 (1M context)",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "databricks-claude-sonnet-5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "databricks-claude-sonnet-5[1m]",
     "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Sonnet 5 (1M context)",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "databricks-claude-haiku-4-5",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "Haiku 4.5 (200K context)",
@@ -104,10 +104,13 @@ New-Item -ItemType Directory -Force -Path "$HOME\.claude" | Out-Null
 | `permissions.deny: ["WebSearch"]` | Databricks가 지원하지 않는 hosted `WebSearch` 차단 |
 | `availableModels` | 메인 세션, subagent, skill, advisor를 검증된 세 alias로 제한 |
 | `enforceAvailableModels` | `/model`의 Default도 위 allowlist 안에서 선택 |
-| `ANTHROPIC_DEFAULT_OPUS_MODEL` | `/model`의 `opus`를 Databricks Opus에 연결 |
-| `ANTHROPIC_DEFAULT_SONNET_MODEL` | `/model`의 `sonnet`을 Databricks Sonnet에 연결 |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` | `/model`의 `opus`를 Databricks Opus 1M context에 연결 |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | `/model`의 `sonnet`을 Databricks Sonnet 1M context에 연결 |
 | `ANTHROPIC_DEFAULT_HAIKU_MODEL` | `/model`의 `haiku`를 Databricks Haiku에 연결 |
 | `ANTHROPIC_DEFAULT_*_MODEL_NAME` | `/model` picker에 모델 이름과 context 크기 표시 |
+
+`[1m]`은 custom `ANTHROPIC_BASE_URL` 뒤에서 1M context를 선택하는 Claude Code
+selector입니다. 실제 Databricks catalog의 모델 ID에는 `[1m]`이 포함되지 않습니다.
 
 기존 `~/.claude/settings.json`이 있다면 파일 전체를 덮어쓰지 말고 아래 키를 병합합니다.
 설정 파일에는 PAT가 들어가므로 파일 권한을 제한합니다.
@@ -131,15 +134,31 @@ icacls "$HOME\.claude\settings.json" `
 
 ## 3. 연결 확인
 
+macOS/Linux:
+
 ```bash
-claude --model opus \
-  -p "Reply with exactly: DIRECT OK" \
-  --output-format json
+for model in opus sonnet haiku; do
+  claude --model "$model" \
+    -p "Reply with exactly: ${model} OK" \
+    --output-format json
+done
 ```
 
-정상 응답에서 `is_error`는 `false`이고 결과에는 `DIRECT OK`가 포함됩니다.
-`modelUsage`에는 `databricks-claude-opus-4-8` 계열 모델과
-`"contextWindow": 1000000`이 표시됩니다.
+Windows PowerShell:
+
+```powershell
+'opus', 'sonnet', 'haiku' | ForEach-Object {
+  claude --model $_ `
+    -p "Reply with exactly: $_ OK" `
+    --output-format json
+}
+```
+
+세 응답 모두 `is_error`가 `false`여야 합니다. 선택한 메인 모델의 `modelUsage`는
+Opus `databricks-claude-opus-4-8[1m]`, Sonnet
+`databricks-claude-sonnet-5[1m]`, Haiku `databricks-claude-haiku-4-5`를 표시합니다.
+Opus와 Sonnet의 `contextWindow`는 `1000000`, Haiku는 `200000`입니다. Opus나 Sonnet
+호출에서도 Claude Code의 내부 경량 작업 때문에 Haiku 사용량이 함께 표시될 수 있습니다.
 
 대화형 실행:
 
@@ -153,11 +172,11 @@ claude
 `/model` alias를 구성합니다. 기본 JSON은 선택 가능한 모델을 실제 검증한 세 alias로
 제한합니다.
 
-| Picker 표시 | 실제 Databricks 모델 |
-| --- | --- |
-| `Opus 4.8 (1M context)` | `databricks-claude-opus-4-8` |
-| `Sonnet 5 (1M context)` | `databricks-claude-sonnet-5` |
-| `Haiku 4.5 (200K context)` | `databricks-claude-haiku-4-5` |
+| Picker 표시 | Claude Code mapping | Databricks 모델 ID | `contextWindow` |
+| --- | --- | --- | --- |
+| `Opus 4.8 (1M context)` | `databricks-claude-opus-4-8[1m]` | `databricks-claude-opus-4-8` | 1,000,000 |
+| `Sonnet 5 (1M context)` | `databricks-claude-sonnet-5[1m]` | `databricks-claude-sonnet-5` | 1,000,000 |
+| `Haiku 4.5 (200K context)` | `databricks-claude-haiku-4-5` | `databricks-claude-haiku-4-5` | 200,000 |
 
 현재 workspace에서 세 모델의 API와 Claude Code alias 호출이 모두 성공하는 것을
 확인했습니다.
@@ -168,18 +187,21 @@ trust and safety 목적으로 30일 보존합니다. 따라서 기본 설정은 
 `availableModels`와 `enforceAvailableModels`로 선택을 차단합니다. Fable을 추가하려면
 먼저 `databricks-claude-fable-5`의 네이티브 Anthropic API 호출이 성공하는지와 보존
 정책을 확인한 뒤 `ANTHROPIC_DEFAULT_FABLE_MODEL`, 해당 `_NAME`, `fable` allowlist를
-함께 추가하세요.
+함께 추가하세요. `--model best`처럼 allowlist 밖 모델을 명시하면 허용된 기본 모델로
+대체될 수 있습니다.
 
 Workspace에서 한 모델만 호출할 수 있다면 세 `ANTHROPIC_DEFAULT_*_MODEL` 값을 같은
 모델 ID로 지정할 수 있습니다.
 
 ## 5. Context window
 
-좌우 방향키로 바꾸는 값은 reasoning effort이며 context window가 아닙니다. 이 가이드의
-검증된 mapping에서는 context window를 선택한 모델이 결정하며 별도 settings가 필요하지
-않습니다. 실제 적용값은 연결 확인 결과의 `modelUsage.contextWindow`로 확인합니다.
+좌우 방향키로 바꾸는 값은 reasoning effort이며 context window가 아닙니다. Custom
+`ANTHROPIC_BASE_URL`을 사용할 때 Claude Code 2.1.207의 plain `opus`와 `sonnet` mapping은
+`contextWindow: 200000`으로 동작합니다. 이 가이드는 기본 model mapping에 `[1m]`
+selector를 포함해 두 alias가 1M context를 사용하도록 구성합니다. 실제 적용값은 연결
+확인 결과의 `modelUsage.contextWindow`로 확인합니다.
 
-2026-07-13 Azure Databricks 모델 catalog와 Anthropic 모델 문서 기준:
+2026-07-14 Azure Databricks 모델 catalog와 Anthropic 모델 문서 기준:
 
 | Databricks 모델 | 모델 context window | 참고 |
 | --- | --- | --- |
@@ -195,7 +217,8 @@ Workspace에서 한 모델만 호출할 수 있다면 세 `ANTHROPIC_DEFAULT_*_M
 | `databricks-claude-haiku-4-5` | 200K tokens | 현재 기본 Haiku |
 | `databricks-claude-fable-5` | 1M tokens | 기본 mapping 제외, 프롬프트·응답 30일 safety 보존 |
 
-현재 Opus와 Sonnet mapping은 이미 1M context를 지원하는 모델을 사용합니다.
+현재 Opus와 Sonnet mapping은 1M 모델에 `[1m]` selector까지 적용합니다. Selector를
+생략하면 같은 Databricks 모델을 호출하더라도 Claude Code가 200K context로 관리합니다.
 
 위 크기는 Azure Databricks catalog의 모델 설명과 동일 Claude 모델의 공식 Anthropic
 model limit을 교차 확인한 값입니다. 모델 ID가 catalog에 있어도 현재 workspace에서
@@ -214,6 +237,7 @@ model limit을 교차 확인한 값입니다. 모델 ID가 catalog에 있어도 
 | 다른 provider나 host가 사용됨 | 터미널의 `ANTHROPIC_*`, `CLAUDE_CODE_USE_*` 환경변수 제거 |
 | beta 관련 400 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` |
 | `web_search_*` 관련 400 | `permissions.deny`의 `WebSearch` |
+| Opus 또는 Sonnet의 `contextWindow`가 `200000` | `ANTHROPIC_DEFAULT_*_MODEL` 값 끝의 `[1m]`과 Claude Code 재시작 |
 | `fable`, `best` 또는 Default가 미검증 모델로 연결됨 | 기본 JSON의 `availableModels`와 `enforceAvailableModels` 병합 여부 |
 | 모델을 찾지 못함 | 실제 모델 ID와 리전 가용성 |
 | `403 ... rate limit of 0` | 모델·리전, rate limit, `CAN QUERY`/`EXECUTE`, 계정 용량 |
