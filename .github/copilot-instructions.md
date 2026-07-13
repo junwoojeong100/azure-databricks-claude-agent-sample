@@ -27,7 +27,7 @@ These rules apply to **all changes** Copilot makes in this repository.
 
 - Examples:
   - `feat(agent): add interactive REPL with per-turn token usage`
-  - `docs: compare Databricks-hosted models vs Foundry models`
+  - `docs: add manual Claude Code setup guide`
   - `fix(setup): preserve existing model configuration`
 
 ## Pull requests

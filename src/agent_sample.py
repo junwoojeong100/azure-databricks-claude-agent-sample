@@ -2,7 +2,7 @@
 
 Azure Databricks exposes an OpenAI-compatible route at
 `/serving-endpoints/chat/completions`. The endpoint name is passed as the
-OpenAI `model`, so no URL rewrite or LiteLLM proxy is required.
+OpenAI `model`, so no URL rewrite is required.
 
 Agent Framework adds its agent name to replayed assistant messages. Databricks
 Claude rejects that optional OpenAI field, so a small request hook removes only

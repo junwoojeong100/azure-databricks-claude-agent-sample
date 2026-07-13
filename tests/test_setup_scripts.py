@@ -47,7 +47,6 @@ def native_response_check() -> str:
 
 def run_bash_setup(
     extra_environment: dict[str, str] | None = None,
-    legacy_environment: str | None = None,
     use_ambient_config_dir: bool = False,
     initial_settings: dict | None = None,
     runs: int = 1,
@@ -79,18 +78,12 @@ def run_bash_setup(
         )
         fake_claude.chmod(0o755)
 
-        for command_name, command_body in (
-            ("uname", "printf '%s\\n' 'TestOS'"),
-            ("launchctl", "exit 0"),
-            ("systemctl", "exit 0"),
-            ("date", "printf '%s\\n' '20260713000000'"),
-        ):
-            fake_command = fake_bin / command_name
-            fake_command.write_text(
-                f"#!/usr/bin/env bash\n{command_body}\n",
-                encoding="utf-8",
-            )
-            fake_command.chmod(0o755)
+        fake_date = fake_bin / "date"
+        fake_date.write_text(
+            "#!/usr/bin/env bash\nprintf '%s\\n' '20260713000000'\n",
+            encoding="utf-8",
+        )
+        fake_date.chmod(0o755)
 
         env_file = temp_path / ".env"
         env_file.write_text(
@@ -108,11 +101,6 @@ def run_bash_setup(
         if initial_settings is not None:
             config_dir.mkdir(parents=True)
             settings_path.write_text(json.dumps(initial_settings), encoding="utf-8")
-        if legacy_environment is not None:
-            state_dir.mkdir()
-            (state_dir / ".env").write_text(legacy_environment, encoding="utf-8")
-            (state_dir / "config.yaml").write_text("model_list: []\n", encoding="utf-8")
-
         environment = os.environ.copy()
         for name in (
             *CONFLICTING_CLAUDE_VARIABLES,
@@ -154,14 +142,8 @@ def run_bash_setup(
             if settings_path.exists()
             else None
         )
-        legacy_backup_path = state_dir / "legacy-state-backups" / ".env.pre-direct"
-        legacy_backup = (
-            legacy_backup_path.read_text(encoding="utf-8")
-            if legacy_backup_path.exists()
-            else None
-        )
         settings_backups = sorted(config_dir.glob("settings.json.bak.*"))
-        return result, settings, legacy_backup, settings_backups
+        return result, settings, settings_backups
 
 
 def run_workspace_setup_without_venv():
@@ -274,7 +256,7 @@ class SetupScriptTests(unittest.TestCase):
 
     def test_embedded_python_blocks_compile(self) -> None:
         blocks = embedded_python_blocks()
-        self.assertGreaterEqual(len(blocks), 2)
+        self.assertGreaterEqual(len(blocks), 1)
 
         for index, block in enumerate(blocks):
             compile(block, f"{BASH_SETUP}:python-block-{index}", "exec")
@@ -299,7 +281,7 @@ class SetupScriptTests(unittest.TestCase):
             self.assertEqual(result.stderr, "", body)
 
     def test_bash_setup_does_not_reject_internal_base_url(self) -> None:
-        result, settings, _, _ = run_bash_setup()
+        result, settings, _ = run_bash_setup()
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIsNotNone(settings)
@@ -310,42 +292,20 @@ class SetupScriptTests(unittest.TestCase):
         )
 
     def test_bash_setup_rejects_provider_selector(self) -> None:
-        result, settings, _, _ = run_bash_setup({"CLAUDE_CODE_USE_FOUNDRY": "1"})
+        result, settings, _ = run_bash_setup({"CLAUDE_CODE_USE_FOUNDRY": "1"})
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIsNone(settings)
         self.assertIn("CLAUDE_CODE_USE_* provider selectors", result.stderr)
 
     def test_bash_setup_uses_ambient_config_directory(self) -> None:
-        result, settings, _, _ = run_bash_setup(use_ambient_config_dir=True)
+        result, settings, _ = run_bash_setup(use_ambient_config_dir=True)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIsNotNone(settings)
 
-    def test_bash_setup_backs_up_complete_legacy_environment(self) -> None:
-        legacy_environment = (
-            "DATABRICKS_API_KEY=legacy-key\n"
-            "DATABRICKS_API_BASE=https://legacy.example\n"
-            "LITELLM_MASTER_KEY=legacy-master\n"
-        )
-        result, _, legacy_backup, _ = run_bash_setup(
-            legacy_environment=legacy_environment
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(legacy_backup, legacy_environment)
-
-    def test_bash_setup_does_not_backup_direct_environment_as_legacy(self) -> None:
-        result, _, legacy_backup, _ = run_bash_setup(
-            legacy_environment="DATABRICKS_TOKEN=already-direct\n"
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIsNone(legacy_backup)
-        self.assertIn("no restorable legacy environment backup", result.stdout)
-
     def test_bash_setup_uses_unique_settings_backup_names(self) -> None:
-        result, settings, _, settings_backups = run_bash_setup(
+        result, settings, settings_backups = run_bash_setup(
             initial_settings={"custom": {"keep": True}},
             runs=2,
         )

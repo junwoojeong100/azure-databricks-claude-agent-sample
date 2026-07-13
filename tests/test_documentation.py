@@ -109,8 +109,9 @@ class DocumentationTests(unittest.TestCase):
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
             "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
             "WebSearch",
-            "### macOS/Linux",
-            "### Windows PowerShell",
+            "### PAT: macOS/Linux",
+            "### PAT: Windows PowerShell",
+            "### 선택: OAuth U2M helper",
         ):
             self.assertIn(required_text, manual_guide)
 
