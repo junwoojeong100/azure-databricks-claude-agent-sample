@@ -83,15 +83,14 @@ Claude Code
   └─ https://<workspace-host>/serving-endpoints/anthropic/v1/messages
 ```
 
-### 접속 정보 입력
+### 한 파일 설정
 
 macOS/Linux:
 
 ```bash
 git clone https://github.com/junwoojeong100/claude-on-azure-databricks.git
 cd claude-on-azure-databricks
-cp .env.example .env
-chmod 600 .env
+mkdir -p .claude
 ```
 
 Windows PowerShell:
@@ -99,56 +98,20 @@ Windows PowerShell:
 ```powershell
 git clone https://github.com/junwoojeong100/claude-on-azure-databricks.git
 Set-Location claude-on-azure-databricks
-Copy-Item .env.example .env
-icacls .env /inheritance:r /grant:r "${env:USERNAME}:(M)"
+New-Item -ItemType Directory -Force -Path .claude | Out-Null
 ```
 
-`.env`:
-
-```dotenv
-DATABRICKS_HOST=https://<workspace-host>
-DATABRICKS_SERVING_ENDPOINT=databricks-claude-opus-4-8
-DATABRICKS_TOKEN=<databricks-token>
-```
+`.claude/settings.local.json`에 workspace URL, PAT, 모델 ID를 입력합니다.
 
 가장 쉬운 시작 경로는 PAT입니다. 정적 PAT 저장을 피하려면
-[OAuth U2M helper](docs/claude-code-databricks-reference.md#5-선택-개인-사용자-oauth-u2m-helper)를
+[OAuth U2M](https://learn.microsoft.com/azure/databricks/dev-tools/auth/oauth-u2m)을
 선택할 수 있습니다. 운영 자동화는
-[OAuth M2M helper](docs/claude-code-databricks-reference.md#6-운영용-oauth-m2m-helper)를
+[OAuth M2M](https://learn.microsoft.com/azure/databricks/dev-tools/auth/oauth-m2m)을
 사용하세요.
 
-### Claude Code 설정
-
-| 방식 | 사용 시점 |
-| --- | --- |
-| 자동 설정(가장 쉬움) | PAT로 기존 settings를 백업·병합하고 모델/API를 함께 검증 |
-| 수동 설정 | `.claude/settings.local.json` 한 파일로 직접 연결할 때 |
-
-#### 자동 설정
-
-macOS/Linux:
-
-```bash
-scripts/setup_claude_code_databricks.sh
-```
-
-Windows PowerShell:
-
-```powershell
-powershell -ExecutionPolicy Bypass `
-  -File .\scripts\setup_claude_code_databricks.ps1
-```
-
-#### 수동 설정
-
-스크립트 없이 로컬 settings 파일 하나로 연결하려면
+전체 JSON은
 [Claude Code와 Azure Databricks 수동 연결](docs/claude-code-databricks-manual.md)을
 따르세요.
-
-기본 설정 대상은 사용자 전역 `~/.claude/settings.json`입니다. 기존 Anthropic,
-Foundry, Bedrock 또는 Vertex 설정과 프로젝트별로 병행해야 한다면
-[Claude Code 연결 가이드의 설정 범위](docs/claude-code-databricks.md#2-자동-설정)를
-먼저 확인하세요.
 
 ### 연결 확인
 
@@ -172,8 +135,6 @@ claude
 
 - [Microsoft Agent Framework 샘플](docs/agent-framework.md): OpenAI 호환
   Chat Completions 경로를 확인하는 별도 실습
-- [Claude Code 상세 참고](docs/claude-code-databricks-reference.md): OAuth U2M/M2M,
-  모델 fallback, credential 충돌, custom base URL
 
 ## 보안과 비용
 

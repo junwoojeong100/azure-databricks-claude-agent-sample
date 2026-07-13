@@ -140,6 +140,6 @@ claude
 이 한 파일 방식은 이해하고 시작하기 쉽지만 PAT가 평문으로 저장됩니다. 보안 요구가
 높아지면 settings의 `ANTHROPIC_AUTH_TOKEN`을 제거하고 다음 방식으로 전환합니다.
 
-- 개인 사용자: [OAuth U2M helper](claude-code-databricks-reference.md#5-선택-개인-사용자-oauth-u2m-helper)
-- 운영 자동화: [OAuth M2M helper](claude-code-databricks-reference.md#6-운영용-oauth-m2m-helper)
+- 개인 사용자: [OAuth U2M](https://learn.microsoft.com/azure/databricks/dev-tools/auth/oauth-u2m)
+- 운영 자동화: [OAuth M2M](https://learn.microsoft.com/azure/databricks/dev-tools/auth/oauth-m2m)
 - 보호된 PAT 파일: 자동 설치기가 생성하는 `apiKeyHelper`
