@@ -5,7 +5,7 @@
 # Automates from an empty subscription and reuses a valid repo .env PAT on reruns:
 #   1. Resource group
 #   2. Azure Databricks workspace
-#   3. Databricks PAT (legacy, via your Microsoft Entra ID login) + .env
+#   3. Databricks PAT (via your Microsoft Entra ID login) + .env
 #   4. Serving-endpoint verification
 #   5. Model connection test through the supported OpenAI-compatible route,
 #      plus the native Anthropic Messages API for Claude
@@ -226,13 +226,13 @@ EOF
 fi
 cat >> "$ROOT/.env" <<EOF
 
-# Fast local validation only: Databricks Personal Access Token (PAT, legacy)
+# Fast local validation: Databricks Personal Access Token (PAT)
 DATABRICKS_TOKEN=$TOKEN
 EOF
 chmod 600 "$ROOT/.env"
 umask "$OLD_UMASK"
 ok ".env written (HOST + $ENDPOINT + $TOKEN_ACTION PAT). PAT length: ${#TOKEN}"
-warn "PAT authentication is legacy. Use it only for quick local validation and prefer OAuth for longer-lived use."
+warn "PAT is the easiest local setup. Consider OAuth U2M or M2M for stronger long-lived security."
 
 # ---------------------------------------------------------------------------
 log "4/6 Verify serving endpoints"

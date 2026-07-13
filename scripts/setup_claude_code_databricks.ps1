@@ -8,14 +8,12 @@
 
         https://<workspace-host>/serving-endpoints/anthropic/v1/messages
 
-    Claude Code can use this endpoint directly. No LiteLLM proxy, Python
-    environment, local port, or auto-start service is required.
+    Claude Code can use this endpoint directly.
 
     This script checks prerequisites and ambient credentials, verifies the
     endpoint and model fallbacks, stores the Databricks token in a
     user-restricted file, configures apiKeyHelper, model aliases, beta
-    filtering, and WebSearch deny, backs up and disables the legacy LiteLLM
-    Scheduled Task if present, and runs an end-to-end test.
+    filtering, and WebSearch deny, and runs an end-to-end test.
 
 .EXAMPLE
     .\scripts\setup_claude_code_databricks.ps1
@@ -28,14 +26,12 @@
 #>
 [CmdletBinding()]
 param(
-    [Alias('ProxyDir')]
     [string]$StateDir = (Join-Path $HOME '.claude-databricks'),
     [string]$ClaudeSettings,
     [string]$Endpoint,
     [string]$FastEndpoint,
     [string]$Models,
-    [string]$EnvFile,
-    [string]$LegacyTaskName = 'ClaudeDatabricksProxy'
+    [string]$EnvFile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -201,26 +197,6 @@ if (-not $Endpoint) {
         'databricks-claude-opus-4-8'
     }
 }
-if (-not $FastEndpoint -and -not $env:DATABRICKS_FAST_ENDPOINT -and (Test-Path $ClaudeSettings)) {
-    try {
-        $ExistingSettings = Get-Content -Raw $ClaudeSettings | ConvertFrom-Json
-    }
-    catch {
-        Stop-WithError "Invalid JSON in $ClaudeSettings`: $($_.Exception.Message)"
-    }
-    if (
-        $null -ne $ExistingSettings -and
-        $ExistingSettings.PSObject.Properties['env'] -and
-        $null -ne $ExistingSettings.env -and
-        $ExistingSettings.env.PSObject.Properties['ANTHROPIC_SMALL_FAST_MODEL']
-    ) {
-        $LegacyFastEndpoint = [string]$ExistingSettings.env.ANTHROPIC_SMALL_FAST_MODEL
-        if ($LegacyFastEndpoint) {
-            $FastEndpoint = $LegacyFastEndpoint
-            Write-Ok "migrating legacy ANTHROPIC_SMALL_FAST_MODEL='$LegacyFastEndpoint'"
-        }
-    }
-}
 if (-not $FastEndpoint) {
     $FastEndpoint = if ($env:DATABRICKS_FAST_ENDPOINT) {
         $env:DATABRICKS_FAST_ENDPOINT
@@ -331,52 +307,6 @@ New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 $StateDir = (Resolve-Path $StateDir).Path
 $TokenFile = Join-Path $StateDir '.env'
 $TokenHelper = Join-Path $StateDir 'get-token.ps1'
-
-$LegacyStateExists = (
-    (Test-Path (Join-Path $StateDir 'config.yaml')) -or
-    (Test-Path (Join-Path $StateDir 'start-proxy.ps1')) -or
-    (Test-Path (Join-Path $StateDir '.venv'))
-)
-if ((Test-Path $TokenFile) -and $LegacyStateExists) {
-    $LegacyStateBackupDir = Join-Path $StateDir 'legacy-state-backups'
-    $LegacyEnvBackup = Join-Path $LegacyStateBackupDir '.env.pre-direct'
-    if (-not (Test-Path $LegacyEnvBackup)) {
-        $LegacyEnvText = Get-Content $TokenFile -Raw
-        $RequiredLegacyKeys = @(
-            'DATABRICKS_API_KEY',
-            'DATABRICKS_API_BASE',
-            'LITELLM_MASTER_KEY'
-        )
-        $MissingLegacyKeys = @(
-            $RequiredLegacyKeys | Where-Object {
-                $LegacyEnvText -notmatch "(?m)^$([regex]::Escape($_))="
-            }
-        )
-        if ($MissingLegacyKeys.Count) {
-            Write-Note (
-                'legacy LiteLLM files exist, but .env no longer has the legacy keys; ' +
-                'no restorable legacy environment backup was created'
-            )
-        }
-        else {
-            New-Item -ItemType Directory -Force -Path $LegacyStateBackupDir | Out-Null
-            Copy-Item $TokenFile $LegacyEnvBackup
-            if ($OnWindows) {
-                & icacls $LegacyEnvBackup /inheritance:r /grant:r "${env:USERNAME}:(M)" | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    Stop-WithError "failed to restrict ACLs on $LegacyEnvBackup"
-                }
-            }
-            else {
-                & chmod 600 $LegacyEnvBackup
-                if ($LASTEXITCODE -ne 0) {
-                    Stop-WithError "failed to set mode 0600 on $LegacyEnvBackup"
-                }
-            }
-            Write-Ok "backed up the legacy LiteLLM environment in $LegacyEnvBackup"
-        }
-    }
-}
 
 Set-Content -Path $TokenFile -Encoding ascii -Value @(
     '# Used only by the Claude Code apiKeyHelper. Contains a Databricks credential.'
@@ -549,30 +479,6 @@ if ($ClaudeSettings -ne $DefaultClaudeSettings) {
     Write-Note 'custom settings path selected; launch from its project scope or set CLAUDE_CONFIG_DIR, and clear ambient Anthropic credentials'
 }
 
-if ($OnWindows) {
-    $LegacyTask = Get-ScheduledTask -TaskName $LegacyTaskName -ErrorAction SilentlyContinue
-    if ($LegacyTask) {
-        $LegacyBackupDir = Join-Path $StateDir 'legacy-autostart-backups'
-        New-Item -ItemType Directory -Force -Path $LegacyBackupDir | Out-Null
-        $LegacyTaskBackup = Join-Path $LegacyBackupDir (
-            "$LegacyTaskName.xml.bak.$(Get-Date -Format 'yyyyMMddHHmmss')-$PID"
-        )
-        $LegacyTaskXml = [string](Export-ScheduledTask -TaskName $LegacyTaskName)
-        Set-Content -Path $LegacyTaskBackup -Value $LegacyTaskXml -Encoding Unicode
-        & icacls $LegacyTaskBackup /inheritance:r /grant:r "${env:USERNAME}:(M)" | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            Stop-WithError "failed to restrict ACLs on $LegacyTaskBackup"
-        }
-        Stop-ScheduledTask -TaskName $LegacyTaskName -ErrorAction SilentlyContinue
-        Unregister-ScheduledTask -TaskName $LegacyTaskName -Confirm:$false
-        Write-Ok "removed legacy LiteLLM Scheduled Task '$LegacyTaskName'"
-        Write-Ok "backed up the legacy Scheduled Task in $LegacyTaskBackup"
-    }
-}
-if ((Test-Path (Join-Path $StateDir 'config.yaml')) -or (Test-Path (Join-Path $StateDir '.venv'))) {
-    Write-Note "legacy LiteLLM files remain in $StateDir but are no longer used"
-}
-
 Write-Step '6/6 Claude Code end-to-end test'
 $SavedConfigDir = $env:CLAUDE_CONFIG_DIR
 $VerifyDir = Join-Path ([System.IO.Path]::GetTempPath()) "claude-direct-$PID"
@@ -607,7 +513,7 @@ if ($ClaudeExit -ne 0 -or $ClaudeResult.is_error -or $ClaudeResult.result -notma
     Write-Host $RawOutput -ForegroundColor Red
     Stop-WithError 'Claude Code direct Databricks test failed'
 }
-Write-Ok 'Claude Code reached Databricks directly without LiteLLM'
+Write-Ok 'Claude Code reached Databricks directly'
 
 Write-Host ''
 Write-Ok 'Done.'
@@ -615,4 +521,3 @@ Write-Host '  - Start Claude Code:  claude'
 Write-Host '  - Switch model:      /model'
 Write-Host "  - Native API:        $AnthropicBaseUrl"
 Write-Host "  - Credential helper: $TokenHelper"
-Write-Host '  - Legacy LiteLLM files, if any, are inert and can be removed after review.'
