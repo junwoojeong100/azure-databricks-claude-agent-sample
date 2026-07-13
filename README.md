@@ -67,7 +67,7 @@ Windows에서 workspace만 생성하거나 각 단계를 직접 제어하려면
 | 값 | 예 |
 | --- | --- |
 | Workspace URL | `https://adb-<workspace-id>.<number>.azuredatabricks.net` |
-| 호출 가능한 Claude 모델 ID | `databricks-claude-opus-4-8` |
+| 호출 가능한 Claude 모델 ID | `databricks-claude-opus-4-8`, `databricks-claude-sonnet-5`, `databricks-claude-haiku-4-5` |
 | 모델 호출 credential | 기본 시작은 PAT, 선택적으로 OAuth U2M, 운영 자동화는 OAuth M2M |
 
 - 사전 구성된 Databricks-hosted pay-per-token 모델은 workspace 접근 권한과 유효한
@@ -116,7 +116,7 @@ Claude Code가 이 파일을 직접 읽어 `/model` 선택기의 Opus/Sonnet/Hai
 ### 연결 확인
 
 ```bash
-claude --model databricks-claude-opus-4-8 \
+claude --model opus \
   -p "Reply with exactly: DIRECT OK" \
   --output-format json
 ```
@@ -134,7 +134,7 @@ claude
 
 ## 보안과 비용
 
-- `.env`, PAT, 생성된 token helper 파일을 커밋하지 마세요.
+- `.env`나 PAT가 포함된 settings 파일을 Git에 커밋하지 마세요.
 - PAT는 가장 쉬운 로컬 시작 방법입니다. 보안 요구가 높으면 OAuth U2M을 선택하고, 운영
   자동화는 서비스 주체 OAuth M2M을 사용하세요.
 - Workspace와 pay-per-token 모델 사용에는 비용이 발생합니다. 실습용 리소스는 사용 후
