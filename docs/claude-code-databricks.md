@@ -73,8 +73,11 @@ New-Item -ItemType Directory -Force -Path "$HOME\.claude" | Out-Null
     "ANTHROPIC_BASE_URL": "https://<workspace-host>/serving-endpoints/anthropic",
     "ANTHROPIC_AUTH_TOKEN": "<databricks-pat>",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "databricks-claude-opus-4-8",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Opus 4.8 (1M context)",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "databricks-claude-sonnet-5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Sonnet 5 (1M context)",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "databricks-claude-haiku-4-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "Haiku 4.5 (200K context)",
     "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1"
   }
 }
@@ -96,6 +99,7 @@ New-Item -ItemType Directory -Force -Path "$HOME\.claude" | Out-Null
 | `ANTHROPIC_DEFAULT_OPUS_MODEL` | `/model`의 `opus`를 Databricks Opus에 연결 |
 | `ANTHROPIC_DEFAULT_SONNET_MODEL` | `/model`의 `sonnet`을 Databricks Sonnet에 연결 |
 | `ANTHROPIC_DEFAULT_HAIKU_MODEL` | `/model`의 `haiku`를 Databricks Haiku에 연결 |
+| `ANTHROPIC_DEFAULT_*_MODEL_NAME` | `/model` picker에 모델 이름과 context 크기 표시 |
 
 기존 `~/.claude/settings.json`이 있다면 파일 전체를 덮어쓰지 말고 아래 키를 병합합니다.
 설정 파일에는 PAT가 들어가므로 파일 권한을 제한합니다.
@@ -138,11 +142,11 @@ claude
 자동 스크립트는 필요하지 않습니다. Claude Code가 settings 파일의 다음 값을 읽어
 `/model` alias를 구성합니다.
 
-| 선택 | 실제 Databricks 모델 |
+| Picker 표시 | 실제 Databricks 모델 |
 | --- | --- |
-| `opus` | `databricks-claude-opus-4-8` |
-| `sonnet` | `databricks-claude-sonnet-5` |
-| `haiku` | `databricks-claude-haiku-4-5` |
+| `Opus 4.8 (1M context)` | `databricks-claude-opus-4-8` |
+| `Sonnet 5 (1M context)` | `databricks-claude-sonnet-5` |
+| `Haiku 4.5 (200K context)` | `databricks-claude-haiku-4-5` |
 
 현재 workspace에서 세 모델의 API와 Claude Code alias 호출이 모두 성공하는 것을
 확인했습니다.
@@ -167,13 +171,26 @@ Workspace에서 한 모델만 호출할 수 있다면 세 `ANTHROPIC_DEFAULT_*_M
 좌우 방향키로 바꾸는 값은 reasoning effort이며 context window가 아닙니다. Context
 window는 선택한 모델이 결정하며 별도 settings가 필요하지 않습니다.
 
-| Databricks 모델 | 모델 context window |
-| --- | --- |
-| `databricks-claude-opus-4-8` | 1M tokens |
-| `databricks-claude-sonnet-5` | 1M tokens |
-| `databricks-claude-haiku-4-5` | 200K tokens |
+2026-07-09 Azure Databricks 모델 catalog 기준:
+
+| Databricks 모델 | 모델 context window | 참고 |
+| --- | --- | --- |
+| `databricks-claude-opus-4-8` | 1M tokens | 현재 기본 Opus |
+| `databricks-claude-opus-4-7` | 1M tokens |  |
+| `databricks-claude-opus-4-6` | 1M tokens |  |
+| `databricks-claude-opus-4-5` | 200K tokens |  |
+| `databricks-claude-opus-4-1` | 200K tokens |  |
+| `databricks-claude-sonnet-5` | 1M tokens | 현재 기본 Sonnet |
+| `databricks-claude-sonnet-4-6` | 1M tokens |  |
+| `databricks-claude-sonnet-4-5` | 200K tokens |  |
+| `databricks-claude-sonnet-4` | 200K tokens |  |
+| `databricks-claude-haiku-4-5` | 200K tokens | 현재 기본 Haiku |
+| `databricks-claude-fable-5` | 1M tokens | 프롬프트·응답 30일 safety 보존 |
 
 현재 Opus와 Sonnet mapping은 이미 1M context를 지원하는 모델을 사용합니다.
+
+Azure Databricks catalog는 별도의 context window 표를 제공하지 않으므로 위 크기는
+Databricks가 제공하는 동일 Claude 모델의 공식 Anthropic model limit을 기준으로 합니다.
 
 다만 모델의 context window와 Azure Databricks workspace의 요청 한도는 별개입니다.
 Pay-per-token endpoint의 기본 ITPM은 200K이고 payload 제한은 4MB이므로, 현재 quota에서
