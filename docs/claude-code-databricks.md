@@ -17,6 +17,7 @@ Claude Code
 | --- | --- |
 | Workspace host | `adb-1234567890123456.7.azuredatabricks.net` |
 | PAT | 해당 workspace와 모델을 호출할 수 있는 token |
+| 모델 ID | `databricks-claude-opus-4-8`, `databricks-claude-sonnet-5`, `databricks-claude-haiku-4-5` |
 
 권한:
 
