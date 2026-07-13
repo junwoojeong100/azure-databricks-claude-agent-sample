@@ -162,7 +162,24 @@ claude
 Workspace에서 한 모델만 호출할 수 있다면 세 `ANTHROPIC_DEFAULT_*_MODEL` 값을 같은
 모델 ID로 지정할 수 있습니다.
 
-## 5. 자주 발생하는 문제
+## 5. Context window
+
+좌우 방향키로 바꾸는 값은 reasoning effort이며 context window가 아닙니다. Context
+window는 선택한 모델이 결정하며 별도 settings가 필요하지 않습니다.
+
+| Databricks 모델 | 모델 context window |
+| --- | --- |
+| `databricks-claude-opus-4-8` | 1M tokens |
+| `databricks-claude-sonnet-5` | 1M tokens |
+| `databricks-claude-haiku-4-5` | 200K tokens |
+
+현재 Opus와 Sonnet mapping은 이미 1M context를 지원하는 모델을 사용합니다.
+
+다만 모델의 context window와 Azure Databricks workspace의 요청 한도는 별개입니다.
+Pay-per-token endpoint의 기본 ITPM은 200K이고 payload 제한은 4MB이므로, 현재 quota에서
+1M-token 입력을 한 요청으로 모두 사용할 수 있다고 가정하면 안 됩니다.
+
+## 6. 자주 발생하는 문제
 
 | 증상 | 확인할 항목 |
 | --- | --- |
@@ -185,5 +202,7 @@ Workspace에서 한 모델만 호출할 수 있다면 세 `ANTHROPIC_DEFAULT_*_M
 
 - [Azure Databricks Anthropic Messages API](https://learn.microsoft.com/azure/databricks/machine-learning/model-serving/query-anthropic-messages)
 - [Databricks-hosted foundation models](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/supported-models)
+- [Azure Databricks Foundation Model API limits](https://learn.microsoft.com/azure/databricks/machine-learning/foundation-model-apis/limits)
 - [Azure Databricks personal access tokens](https://learn.microsoft.com/azure/databricks/dev-tools/auth/pat#create-personal-access-tokens-for-workspace-users)
+- [Claude context windows](https://platform.claude.com/docs/en/build-with-claude/context-windows)
 - [Claude Code model configuration](https://code.claude.com/docs/en/model-config)
