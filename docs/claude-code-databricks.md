@@ -1,22 +1,21 @@
 # Claude Code에서 Azure Databricks Claude 사용하기
 
-이 가이드는 Azure Databricks workspace에서 Anthropic Claude 모델을 이미 호출할 수 있는
-사용자를 위한 것입니다.
+Azure Databricks workspace에서 Anthropic Claude 모델을 이미 호출할 수 있다면
+`.claude/settings.local.json` 파일 하나로 Claude Code를 연결할 수 있습니다.
 
 ```text
 Claude Code
-  └─ https://<workspace-host>/serving-endpoints/anthropic/v1/messages
+  └─ .claude/settings.local.json
+       └─ Azure Databricks /serving-endpoints/anthropic/v1/messages
 ```
 
-> 최종 검증: 2026-07-13, Claude Code 2.1.207,
-> `databricks-claude-opus-4-8`.
+> 최종 검증: 2026-07-13, Claude Code 2.1.207.
 
 ## 1. 필요한 값
 
 | 값 | 예 |
 | --- | --- |
-| Workspace URL | `https://adb-1234567890123456.7.azuredatabricks.net` |
-| Claude 모델 ID | `databricks-claude-opus-4-8` |
+| Workspace host | `adb-1234567890123456.7.azuredatabricks.net` |
 | PAT | 해당 workspace와 모델을 호출할 수 있는 token |
 
 권한:
@@ -43,31 +42,69 @@ claude --version
 
 Opus 4.8은 2.1.154 이상, Sonnet 5는 2.1.197 이상이 필요합니다.
 
-## 2. 한 파일로 설정
+## 2. Settings 파일 만들기
 
-프로젝트 루트의 `.claude/settings.local.json`에 workspace URL, PAT, 모델 ID를
-입력합니다. 이 파일은 이 리포의 `.gitignore`에 포함됩니다.
+프로젝트 루트에서 `.claude` 디렉터리를 만듭니다.
 
-[최소 수동 설정 가이드](claude-code-databricks-manual.md)의 JSON을 그대로 사용하세요.
+macOS/Linux:
 
-핵심 설정:
+```bash
+mkdir -p .claude
+chmod 700 .claude
+```
 
-- `ANTHROPIC_BASE_URL`
-- `ANTHROPIC_AUTH_TOKEN`
-- `ANTHROPIC_DEFAULT_OPUS_MODEL`
-- `ANTHROPIC_DEFAULT_SONNET_MODEL`
-- `ANTHROPIC_DEFAULT_HAIKU_MODEL`
-- `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`
-- `permissions.deny`의 `WebSearch`
+Windows PowerShell:
 
-`ANTHROPIC_DEFAULT_*_MODEL` 값만으로 `/model` 선택기의 Opus/Sonnet/Haiku alias가
-각 Databricks 모델로 연결됩니다. 선택기를 제한하고 싶을 때만 `availableModels`를
-추가하며 자동 스크립트는 필요하지 않습니다.
+```powershell
+New-Item -ItemType Directory -Force -Path .claude | Out-Null
+```
+
+`.claude/settings.local.json`:
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "WebSearch"
+    ]
+  },
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://<workspace-host>/serving-endpoints/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "<databricks-pat>",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "databricks-claude-opus-4-8",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "databricks-claude-sonnet-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "databricks-claude-haiku-4-5",
+    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1"
+  }
+}
+```
+
+바꿀 값:
+
+| Placeholder | 입력할 값 |
+| --- | --- |
+| `<workspace-host>` | `adb-...azuredatabricks.net` 형식의 host |
+| `<databricks-pat>` | 발급받은 PAT |
+
+이 리포는 `.claude/settings.local.json`을 Git에서 제외합니다. 파일 권한도 제한합니다.
+
+macOS/Linux:
+
+```bash
+chmod 600 .claude/settings.local.json
+```
+
+Windows PowerShell:
+
+```powershell
+icacls .claude\settings.local.json `
+  /inheritance:r /grant:r "${env:USERNAME}:(M)" | Out-Null
+```
 
 ## 3. 연결 확인
 
 ```bash
-claude --model databricks-claude-opus-4-8 \
+claude --model opus \
   -p "Reply with exactly: DIRECT OK" \
   --output-format json
 ```
@@ -80,27 +117,40 @@ claude --model databricks-claude-opus-4-8 \
 claude
 ```
 
-`/model`에서 Databricks 모델과 Opus/Sonnet/Haiku alias를 확인할 수 있습니다.
+## 4. 모델 선택기
 
-## 4. 모델 전환
+자동 스크립트는 필요하지 않습니다. Claude Code가 settings 파일의 다음 값을 읽어
+`/model` alias를 구성합니다.
 
-```text
-/model
+| 선택 | 실제 Databricks 모델 |
+| --- | --- |
+| `opus` | `databricks-claude-opus-4-8` |
+| `sonnet` | `databricks-claude-sonnet-5` |
+| `haiku` | `databricks-claude-haiku-4-5` |
+
+현재 workspace에서 세 모델의 API와 Claude Code alias 호출이 모두 성공하는 것을
+확인했습니다.
+
+선택기를 세 alias로 제한하고 싶을 때만 settings 최상위에 다음 항목을 추가합니다.
+
+```json
+{
+  "availableModels": [
+    "opus",
+    "sonnet",
+    "haiku"
+  ]
+}
 ```
 
-또는 시작할 때 모델 ID를 지정합니다.
-
-```bash
-claude --model databricks-claude-sonnet-5
-```
-
-모델 ID는 현재 workspace에서 실제 호출 가능한 값이어야 합니다.
+Workspace에서 한 모델만 호출할 수 있다면 세 `ANTHROPIC_DEFAULT_*_MODEL` 값을 같은
+모델 ID로 지정할 수 있습니다.
 
 ## 5. 자주 발생하는 문제
 
 | 증상 | 확인할 항목 |
 | --- | --- |
-| `401 Credential was not sent` | settings의 PAT와 workspace URL |
+| `401 Credential was not sent` | PAT와 workspace host |
 | 다른 provider나 host가 사용됨 | 터미널의 `ANTHROPIC_*`, `CLAUDE_CODE_USE_*` 환경변수 제거 |
 | beta 관련 400 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` |
 | `web_search_*` 관련 400 | `permissions.deny`의 `WebSearch` |

@@ -112,7 +112,7 @@ Claude Code가 이 파일을 직접 읽어 `/model` 선택기의 Opus/Sonnet/Hai
 사용하세요.
 
 전체 JSON은
-[Claude Code와 Azure Databricks 수동 연결](docs/claude-code-databricks-manual.md)을
+[Claude Code에서 Azure Databricks Claude 사용하기](docs/claude-code-databricks.md)를
 따르세요.
 
 ### 연결 확인
@@ -128,10 +128,6 @@ claude --model databricks-claude-opus-4-8 \
 ```bash
 claude
 ```
-
-전체 절차와 문제 해결은
-[Claude Code에서 Azure Databricks Claude 사용하기](docs/claude-code-databricks.md)를
-확인하세요.
 
 ## 추가 가이드
 

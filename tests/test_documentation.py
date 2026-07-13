@@ -95,9 +95,9 @@ class DocumentationTests(unittest.TestCase):
 
         self.assertEqual(linked_guides, set(docs_dir.glob("*.md")))
 
-    def test_manual_guide_covers_required_configuration(self) -> None:
-        manual_path = ROOT / "docs" / "claude-code-databricks-manual.md"
-        manual_guide = manual_path.read_text(encoding="utf-8")
+    def test_claude_guide_covers_required_configuration(self) -> None:
+        guide_path = ROOT / "docs" / "claude-code-databricks.md"
+        guide = guide_path.read_text(encoding="utf-8")
 
         for required_text in (
             ".claude/settings.local.json",
@@ -108,9 +108,9 @@ class DocumentationTests(unittest.TestCase):
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
             "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
             "WebSearch",
-            "모델 선택기 동작",
+            "## 4. 모델 선택기",
         ):
-            self.assertIn(required_text, manual_guide)
+            self.assertIn(required_text, guide)
 
     def test_local_links_and_anchors_resolve(self) -> None:
         anchor_cache = {path: markdown_anchors(path) for path in MARKDOWN_FILES}
