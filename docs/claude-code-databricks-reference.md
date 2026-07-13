@@ -2,7 +2,7 @@
 
 이 문서는 [직접 연결 가이드](claude-code-databricks.md)의 인증, 모델, 설정 충돌과
 문제 해결 세부사항을 모은 참고 문서입니다. 자동 스크립트 없이 직접 구성하려면
-[수동 연결 가이드](claude-code-databricks-manual.md)를 사용합니다.
+[한 파일 수동 연결 가이드](claude-code-databricks-manual.md)를 사용합니다.
 
 ## 1. 직접 연결 구조
 

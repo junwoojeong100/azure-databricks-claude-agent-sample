@@ -216,9 +216,9 @@ claude
 
 ## 4. 스크립트 없이 수동 설정
 
-Credential helper 생성, settings 범위 선택, JSON 병합, 충돌 제거를 직접 수행하려면
+`.claude/settings.local.json` 한 파일에 URL, PAT, 모델 ID를 직접 넣으려면
 [Claude Code와 Azure Databricks 수동 연결](claude-code-databricks-manual.md)을
-따르세요. 자동 설치기가 무엇을 구성하는지 단계별로 확인할 수 있습니다.
+따르세요.
 
 ### 현재 셸에서 한 번만 테스트
 

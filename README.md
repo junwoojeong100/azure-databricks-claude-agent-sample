@@ -112,7 +112,7 @@ DATABRICKS_TOKEN=<databricks-token>
 ```
 
 가장 쉬운 시작 경로는 PAT입니다. 정적 PAT 저장을 피하려면
-[수동 가이드의 OAuth U2M helper](docs/claude-code-databricks-manual.md#선택-oauth-u2m-helper)를
+[OAuth U2M helper](docs/claude-code-databricks-reference.md#5-선택-개인-사용자-oauth-u2m-helper)를
 선택할 수 있습니다. 운영 자동화는
 [OAuth M2M helper](docs/claude-code-databricks-reference.md#6-운영용-oauth-m2m-helper)를
 사용하세요.
@@ -122,7 +122,7 @@ DATABRICKS_TOKEN=<databricks-token>
 | 방식 | 사용 시점 |
 | --- | --- |
 | 자동 설정(가장 쉬움) | PAT로 기존 settings를 백업·병합하고 모델/API를 함께 검증 |
-| 수동 설정 | PAT 또는 선택적 OAuth U2M helper를 직접 구성할 때 |
+| 수동 설정 | `.claude/settings.local.json` 한 파일로 직접 연결할 때 |
 
 #### 자동 설정
 
@@ -141,7 +141,7 @@ powershell -ExecutionPolicy Bypass `
 
 #### 수동 설정
 
-스크립트 없이 각 설정을 직접 구성하려면
+스크립트 없이 로컬 settings 파일 하나로 연결하려면
 [Claude Code와 Azure Databricks 수동 연결](docs/claude-code-databricks-manual.md)을
 따르세요.
 
