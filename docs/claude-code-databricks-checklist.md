@@ -8,7 +8,7 @@
 - [자동·수동 연결 가이드](claude-code-databricks.md)
 - [인증·모델·gateway 상세 참고](claude-code-databricks-reference.md)
 
-> 최종 검증: 2026-07-12, Claude Code 2.1.207.
+> 최종 검증: 2026-07-13, Claude Code 2.1.207.
 
 ## 핵심 메시지
 

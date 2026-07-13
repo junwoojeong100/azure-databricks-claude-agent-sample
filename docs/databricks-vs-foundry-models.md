@@ -1,6 +1,6 @@
 # Databricks-hosted Claude vs Claude in Microsoft Foundry
 
-> 최종 검증: 2026-07-12. 모델 가용성, 쿼터, 가격, Preview 상태는 자주 바뀌므로
+> 최종 검증: 2026-07-13. 모델 가용성, 쿼터, 가격, Preview 상태는 자주 바뀌므로
 > 배포 전 [공식 문서](#공식-참고-문서)를 다시 확인하세요.
 >
 > 이 문서는 운영 선택을 위한 심화 비교입니다. 실습 순서는 [README](../README.md),

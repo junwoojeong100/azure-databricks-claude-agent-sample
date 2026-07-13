@@ -48,6 +48,8 @@ def run_bash_setup(
     extra_environment: dict[str, str] | None = None,
     legacy_environment: str | None = None,
     use_ambient_config_dir: bool = False,
+    initial_settings: dict | None = None,
+    runs: int = 1,
 ):
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
@@ -67,10 +69,10 @@ def run_bash_setup(
         fake_claude = fake_bin / "claude"
         fake_claude.write_text(
             "#!/usr/bin/env bash\n"
-            "if [ \"${1:-}\" = \"--version\" ]; then\n"
+            'if [ "${1:-}" = "--version" ]; then\n'
             "  printf '%s\\n' '2.1.207'\n"
             "else\n"
-            "  printf '%s\\n' '{\"is_error\":false,\"result\":\"DIRECT OK\"}'\n"
+            '  printf \'%s\\n\' \'{"is_error":false,"result":"DIRECT OK"}\'\n'
             "fi\n",
             encoding="utf-8",
         )
@@ -80,6 +82,7 @@ def run_bash_setup(
             ("uname", "printf '%s\\n' 'TestOS'"),
             ("launchctl", "exit 0"),
             ("systemctl", "exit 0"),
+            ("date", "printf '%s\\n' '20260713000000'"),
         ):
             fake_command = fake_bin / command_name
             fake_command.write_text(
@@ -101,13 +104,20 @@ def run_bash_setup(
         )
         settings_path = config_dir / "settings.json"
         state_dir = home / ".claude-databricks"
+        if initial_settings is not None:
+            config_dir.mkdir(parents=True)
+            settings_path.write_text(json.dumps(initial_settings), encoding="utf-8")
         if legacy_environment is not None:
             state_dir.mkdir()
             (state_dir / ".env").write_text(legacy_environment, encoding="utf-8")
             (state_dir / "config.yaml").write_text("model_list: []\n", encoding="utf-8")
 
         environment = os.environ.copy()
-        for name in (*CONFLICTING_CLAUDE_VARIABLES, "DATABRICKS_HOST", "DATABRICKS_TOKEN"):
+        for name in (
+            *CONFLICTING_CLAUDE_VARIABLES,
+            "DATABRICKS_HOST",
+            "DATABRICKS_TOKEN",
+        ):
             environment.pop(name, None)
         environment.pop("CLAUDE_CONFIG_DIR", None)
         environment.pop("CLAUDE_SETTINGS", None)
@@ -126,13 +136,18 @@ def run_bash_setup(
         if extra_environment:
             environment.update(extra_environment)
 
-        result = subprocess.run(
-            ["bash", str(BASH_SETUP)],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            env=environment,
-        )
+        result = None
+        for _ in range(runs):
+            result = subprocess.run(
+                ["bash", str(BASH_SETUP)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            if result.returncode:
+                break
+        assert result is not None
         settings = (
             json.loads(settings_path.read_text(encoding="utf-8"))
             if settings_path.exists()
@@ -144,7 +159,8 @@ def run_bash_setup(
             if legacy_backup_path.exists()
             else None
         )
-        return result, settings, legacy_backup
+        settings_backups = sorted(config_dir.glob("settings.json.bak.*"))
+        return result, settings, legacy_backup, settings_backups
 
 
 class SetupScriptTests(unittest.TestCase):
@@ -175,7 +191,7 @@ class SetupScriptTests(unittest.TestCase):
             self.assertEqual(result.stderr, "", body)
 
     def test_bash_setup_does_not_reject_internal_base_url(self) -> None:
-        result, settings, _ = run_bash_setup()
+        result, settings, _, _ = run_bash_setup()
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIsNotNone(settings)
@@ -186,14 +202,14 @@ class SetupScriptTests(unittest.TestCase):
         )
 
     def test_bash_setup_rejects_provider_selector(self) -> None:
-        result, settings, _ = run_bash_setup({"CLAUDE_CODE_USE_FOUNDRY": "1"})
+        result, settings, _, _ = run_bash_setup({"CLAUDE_CODE_USE_FOUNDRY": "1"})
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIsNone(settings)
         self.assertIn("CLAUDE_CODE_USE_* provider selectors", result.stderr)
 
     def test_bash_setup_uses_ambient_config_directory(self) -> None:
-        result, settings, _ = run_bash_setup(use_ambient_config_dir=True)
+        result, settings, _, _ = run_bash_setup(use_ambient_config_dir=True)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIsNotNone(settings)
@@ -204,7 +220,7 @@ class SetupScriptTests(unittest.TestCase):
             "DATABRICKS_API_BASE=https://legacy.example\n"
             "LITELLM_MASTER_KEY=legacy-master\n"
         )
-        result, _, legacy_backup = run_bash_setup(
+        result, _, legacy_backup, _ = run_bash_setup(
             legacy_environment=legacy_environment
         )
 
@@ -212,13 +228,24 @@ class SetupScriptTests(unittest.TestCase):
         self.assertEqual(legacy_backup, legacy_environment)
 
     def test_bash_setup_does_not_backup_direct_environment_as_legacy(self) -> None:
-        result, _, legacy_backup = run_bash_setup(
+        result, _, legacy_backup, _ = run_bash_setup(
             legacy_environment="DATABRICKS_TOKEN=already-direct\n"
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIsNone(legacy_backup)
         self.assertIn("no restorable legacy environment backup", result.stdout)
+
+    def test_bash_setup_uses_unique_settings_backup_names(self) -> None:
+        result, settings, _, settings_backups = run_bash_setup(
+            initial_settings={"custom": {"keep": True}},
+            runs=2,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(settings)
+        self.assertEqual(len(settings_backups), 2)
+        self.assertEqual(len({path.name for path in settings_backups}), 2)
 
     def test_settings_merge_preserves_unrelated_values(self) -> None:
         merge_block = next(
