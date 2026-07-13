@@ -86,6 +86,16 @@ New-Item -ItemType Directory -Force -Path .claude | Out-Null
 | `<workspace-host>` | `adb-...azuredatabricks.net` 형식의 host |
 | `<databricks-pat>` | 발급받은 PAT |
 
+이 파일에서 모든 설정을 수동으로 처리합니다.
+
+| 설정 | 역할 |
+| --- | --- |
+| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` | Databricks가 지원하지 않는 Claude beta 요청 비활성화 |
+| `permissions.deny: ["WebSearch"]` | Databricks가 지원하지 않는 hosted `WebSearch` 차단 |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` | `/model`의 `opus`를 Databricks Opus에 연결 |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | `/model`의 `sonnet`을 Databricks Sonnet에 연결 |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | `/model`의 `haiku`를 Databricks Haiku에 연결 |
+
 이 리포는 `.claude/settings.local.json`을 Git에서 제외합니다. 파일 권한도 제한합니다.
 
 macOS/Linux:
